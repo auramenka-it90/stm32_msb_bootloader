@@ -1,0 +1,12 @@
+/Debug/*.*
+/Debug/**
+/Release/*.*
+/Release/**
+*.o
+*.ko
+*.obj
+*.elf
+*.mk
+*.launch
+*.d
+*.su

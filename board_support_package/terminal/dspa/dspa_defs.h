@@ -1,0 +1,9 @@
+#ifndef DSPA_TYPES_H_
+#define DSPA_TYPES_H_
+
+// Telemetry attributes
+#define TEL_ATTR_SUPPORT_STREAM 0x00000001
+#define TEL_ATTR_SUPPORT_FRAMES 0x00000002
+#define TEL_ATTR_SUPPORT_BUFFER 0x00000004
+
+#endif /* DSPA_TYPES_H_ */
