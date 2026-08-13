@@ -32,29 +32,28 @@ Pin_Mgmt_Config_t pin = {
 uint32_t init_hardware(void) {
 
     /* 1. PINS CONFIGURATION */
-    /* Must be configured first before memory and other peripherals */
-    if (PIN_MGMT_Init(&pin) != osOK) {
+    if (PIN_MGMT_Init(&bsp_pin_config) != osOK) {
         test_hardware_result |= _B_FAULT_PINS_;
     } else {
-        DWT_Init(); /* Initialize microsecond delay generator */
+        DWT_Init();
 
-         /* aAssist always set PROGB ->LO	& asquire SPI	*/
+        /* Держим FPGA в сбросе */
         PIN_Reset(&pin_mr_prog);
-        SPI_Bus_Acquire_For_STM32();
     }
 
     /* 2. W25Q128 FLASH CONFIGURATION */
-    /* Configure after pins are successfully initialized */
     if (test_status_hardware(_B_FAULT_PINS_)) {
-        if (W25Q128_Init_With_PinMgmt(&bsp_flash, &hspi1) != osOK) {
+
+        /* Инициализируем Flash без захвата шины */
+        if (W25Q128_Init(&bsp_flash, &hspi1, SP1_FPGA_CSO_GPIO_Port, SP1_FPGA_CSO_Pin) != osOK) {
             test_hardware_result |= _B_FAULT_W25Q128_;
         } else {
-            /* Read flash identification parameters */
             W25Q128_ReadJEDECID(&bsp_flash);
             W25Q128_ReadUID(&bsp_flash);
         }
     }
-    /* 3. TERMINAL (eAssist) */
+
+    /* 3. TERMINAL */
     if (!terminal_init()) {
         test_hardware_result |= _B_FAULT_TERMINAL_;
     }
@@ -182,26 +181,37 @@ void jump_main_application(uint32_t addr) {
 
         /* VALID FIRMWARE DETECTED! Proceed to safe bootloader teardown */
 
+        /* 3. CRITICAL: Disable all CPU interrupts globally FIRST */
+        /* Prevents ISR execution while hardware is being deinitialized */
+        __disable_irq();
+
         /* Lock the RTOS kernel scheduler to stop task switching */
         osKernelLock();
-
-        /* Deep-clean and deinitialize all hardware peripherals to raw reset states */
-        bsp_deinit();
 
         /* Hard-disable the SysTick timer and clear its registers */
         SysTick->CTRL = 0;
         SysTick->LOAD = 0;
         SysTick->VAL  = 0;
 
-        /* Disable all CPU interrupts globally before executing the jump */
-        __disable_irq();
+        /* Deep-clean and deinitialize all hardware peripherals to raw reset states */
+        bsp_deinit();
+
+        /* 4. CRITICAL: Clear all pending interrupts in the NVIC */
+        /* Ensures the Main App doesn't immediately trigger a stale bootloader interrupt */
+        for (uint8_t i = 0; i < 8; i++) {
+            NVIC->ICER[i] = 0xFFFFFFFFU; /* Disable all interrupts */
+            NVIC->ICPR[i] = 0xFFFFFFFFU; /* Clear all pending flags */
+        }
+
+        /* 5. Disable instruction/data caches (ART Accelerator) for a clean start */
+        FLASH->ACR &= ~(FLASH_ACR_ICEN | FLASH_ACR_DCEN);
 
         /* Extract the reset handler address (stored at App base + 4) */
         JumpAddress = *(__IO uint32_t*)(addr + 4);
         Jump_To_Application = (void (*)(void))JumpAddress;
 
         /* Set the Main Stack Pointer (MSP) for the new application */
-        __set_MSP(*(__IO uint32_t*)addr);
+        __set_MSP(stack_pointer);
 
         /* Execute the jump (no return from this point) */
         Jump_To_Application();

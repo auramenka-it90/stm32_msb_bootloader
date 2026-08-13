@@ -29,14 +29,6 @@ typedef struct {
 } Pin_Descriptor_t;
 
 /**
-  * @brief  SPI bus configuration modes
-  */
-typedef enum {
-    SPI_BUS_AF_MODE = 0,     /*!< Alternate Function mode (SPI peripheral) */
-    SPI_BUS_HIZ_MODE         /*!< High impedance mode (tristate) */
-} SPI_Bus_Mode_t;
-
-/**
   * @brief  Library configuration structure
   */
 typedef struct {
@@ -55,7 +47,7 @@ typedef struct {
     { .port = _port, .pin = _pin, .default_state = _def_state, .name = _name }
 
 /* ========================================================================= */
-/*  GLOBAL CONFIGURATION HANDLES (Now in driver header!)                      */
+/*  GLOBAL CONFIGURATION HANDLES                                             */
 /* ========================================================================= */
 extern Pin_Mgmt_Config_t bsp_pin_config; /* Global Pin Management configuration instance */
 
@@ -82,19 +74,6 @@ osStatus_t PIN_GPIO_Mutex_Acquire(uint32_t timeout);
 osStatus_t PIN_GPIO_Mutex_Release(void);
 uint8_t PIN_GPIO_Mutex_Is_Locked(void);
 
-/* ==================== FPGA CONTROL ==================== */
-osStatus_t FPGA_Reset_OS(uint32_t reset_time_ms);
-osStatus_t FPGA_Wait_Ready(uint32_t timeout_ms);
-uint8_t FPGA_Is_Ready(void);
-uint8_t FPGA_Is_In_Reset(void);
-
-/* ==================== SPI BUS CONTROL ==================== */
-osStatus_t SPI_Bus_Configure(SPI_Bus_Mode_t mode);
-osStatus_t SPI_Bus_Acquire_For_STM32(void);
-osStatus_t SPI_Bus_Release_To_FPGA(void);
-osStatus_t SPI_Bus_Hold_For_Reset(void);
-uint8_t SPI_Bus_Is_Acquired(void);
-
 /* ==================== STLINK DETECTION ==================== */
 uint8_t STLINK_Is_Connected(void);
 
@@ -116,17 +95,6 @@ osStatus_t PIN_Blink(const Pin_Descriptor_t* pin, uint8_t count, uint32_t delay_
 #define PIN_TOGGLE_F(pin)    PIN_Toggle_F(pin)
 #define PIN_STATE_F(pin)     PIN_Read_F(pin)
 
-/* FPGA macros */
-#define FPGA_RESET(time_ms)  FPGA_Reset_OS(time_ms)
-#define FPGA_READY()         FPGA_Is_Ready()
-#define FPGA_IN_RESET()      FPGA_Is_In_Reset()
-
-/* SPI Bus Control macros */
-#define SPI_BUS_ACQUIRE_STM32()     SPI_Bus_Acquire_For_STM32()
-#define SPI_BUS_RELEASE_FPGA()      SPI_Bus_Release_To_FPGA()
-#define SPI_BUS_HOLD_RESET()        SPI_Bus_Hold_For_Reset()
-#define SPI_BUS_IS_ACQUIRED()       SPI_Bus_Is_Acquired()
-
 /* LED macros */
 #define LED_GREEN_ON()       PIN_Set(&pin_led_green)
 #define LED_GREEN_OFF()      PIN_Reset(&pin_led_green)
@@ -134,7 +102,7 @@ osStatus_t PIN_Blink(const Pin_Descriptor_t* pin, uint8_t count, uint32_t delay_
 #define LED_GREEN_ON_F()     PIN_Set_F(&pin_led_green)
 #define LED_GREEN_OFF_F()    PIN_Reset_F(&pin_led_green)
 
-/* Test Point macros (Fast variants are critical for logic analyzer debugging!) */
+/* Test Point macros */
 #define TP1_ON()             PIN_Set_F(&pin_tp1)
 #define TP1_OFF()            PIN_Reset_F(&pin_tp1)
 #define TP2_ON()             PIN_Set_F(&pin_tp2)
@@ -147,10 +115,10 @@ osStatus_t PIN_Blink(const Pin_Descriptor_t* pin, uint8_t count, uint32_t delay_
 /* SPI Pins macros */
 #define SPI_CSO_ON()         PIN_Set(&pin_spi_cso)
 #define SPI_CSO_OFF()        PIN_Reset(&pin_spi_cso)
-#define SPI_CSO_ON_F()       PIN_Set_F(&pin_spi_cso)  /* High-speed CS toggle */
+#define SPI_CSO_ON_F()       PIN_Set_F(&pin_spi_cso)
 #define SPI_CSO_OFF_F()      PIN_Reset_F(&pin_spi_cso)
 
-/* Exported Pin descriptors - mapped to actual hardware ports */
+/* Exported Pin descriptors */
 extern const Pin_Descriptor_t pin_led_green;
 extern const Pin_Descriptor_t pin_clk25mhz;
 extern const Pin_Descriptor_t pin_tp1;

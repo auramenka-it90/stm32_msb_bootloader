@@ -47,19 +47,11 @@ static osStatus_t W25Q128_UnlockMutex(W25Q128_Handle_t *flash) {
 
 /* Chip Select Operations (Using fast Pin Macros) */
 static void W25Q128_CS_Select(W25Q128_Handle_t *flash) {
-    if (flash->use_pin_mgmt) {
-        PIN_Reset_F(&pin_spi_cso);  /* Direct port register write */
-    } else {
-        HAL_GPIO_WritePin(flash->cs_port, flash->cs_pin, GPIO_PIN_RESET);
-    }
+    PIN_Reset_F(&pin_spi_cso);  /* Direct port register write */
 }
 
 static void W25Q128_CS_Deselect(W25Q128_Handle_t *flash) {
-    if (flash->use_pin_mgmt) {
-        PIN_Set_F(&pin_spi_cso);    /* Direct port register write */
-    } else {
-        HAL_GPIO_WritePin(flash->cs_port, flash->cs_pin, GPIO_PIN_SET);
-    }
+    PIN_Set_F(&pin_spi_cso);    /* Direct port register write */
 }
 
 /* Transmit/Receive Operations (With conditional Mutex Protection) */
@@ -179,9 +171,8 @@ uint8_t W25Q128_IsUIDValid(W25Q128_Handle_t *flash) {
 }
 
 /* Flash Initialization */
-osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
-                         GPIO_TypeDef *cs_port, uint16_t cs_pin,
-                         uint8_t use_pin_mgmt) {
+osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
+                       GPIO_TypeDef *cs_port, uint16_t cs_pin) {
     if (flash == NULL || hspi == NULL) {
         return osErrorParameter;
     }
@@ -191,21 +182,11 @@ osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
     flash->hspi = hspi;
     flash->cs_port = cs_port;
     flash->cs_pin = cs_pin;
-    flash->use_pin_mgmt = use_pin_mgmt;
     flash->capacity = W25Q128_FLASH_SIZE;
 
     flash->jedec_valid = 0;
     flash->uid_valid = 0;
 
-    /* Acquire SPI bus pins via Pin Management safely using standard OS types */
-    if (use_pin_mgmt) {
-        osStatus_t pin_status = SPI_Bus_Acquire_For_STM32();
-        if (pin_status != osOK) {
-            return pin_status;
-        }
-    }
-
-    /* Compile Mutex if requested */
 #if (BSP_W25Q128_USE_MUTEX == 1)
     if (static_spi_mutex == NULL) {
         const osMutexAttr_t mutex_attr = W25Q128_MUTEX_ATTR;
@@ -213,9 +194,6 @@ osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
     }
 
     if (static_spi_mutex == NULL) {
-        if (use_pin_mgmt) {
-          /*  SPI_Bus_Release_To_FPGA();	*/
-        }
         return osErrorResource;
     }
     flash->spi_mutex = static_spi_mutex;
@@ -223,18 +201,12 @@ osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
 
     osStatus_t status = W25Q128_ReadJEDECID(flash);
     if (status != osOK) {
-        if (use_pin_mgmt) {
-          /*  SPI_Bus_Release_To_FPGA(); */
-        }
         return status;
     }
 
     if (flash->manufacturer_id != W25Q128_MANUFACTURER_ID ||
         flash->memory_type != W25Q128_MEMORY_TYPE ||
         flash->capacity_id != W25Q128_CAPACITY) {
-        if (use_pin_mgmt) {
-          /*  SPI_Bus_Release_To_FPGA(); */
-        }
         flash->jedec_valid = 0;
         return osError;
     }
@@ -243,24 +215,9 @@ osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
     return osOK;
 }
 
-osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
-                       GPIO_TypeDef *cs_port, uint16_t cs_pin) {
-    return W25Q128_Init_Ex(flash, hspi, cs_port, cs_pin, 0);
-}
-
-osStatus_t W25Q128_Init_With_PinMgmt(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi) {
-    return W25Q128_Init_Ex(flash, hspi, 
-                          SP1_FPGA_CSO_GPIO_Port, SP1_FPGA_CSO_Pin,
-                          1);
-}
-
 osStatus_t W25Q128_DeInit(W25Q128_Handle_t *flash) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
-    }
-
-    if (flash->use_pin_mgmt) {
-      /*  SPI_Bus_Release_To_FPGA(); */
     }
 
 #if (BSP_W25Q128_USE_MUTEX == 1)

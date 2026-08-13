@@ -9,11 +9,10 @@
 
 #include "pin_mgmt.h"
 
-/* Global structures instantiation (Defined here, externed in header) */
+/* Global structures instantiation */
 Pin_Mgmt_Config_t bsp_pin_config = PIN_MGMT_CONFIG_DEFAULT;
 
 /* Private variables ---------------------------------------------------------*/
-static uint8_t spi_bus_acquired = 0;
 static osMutexId_t gpio_mutex = NULL;
 
 /* Pin descriptors */
@@ -53,8 +52,6 @@ const Pin_Descriptor_t pin_usart1_kpa_rx = PIN_DESC(USART1_KPA_RX_GPIO_Port, USA
 const Pin_Descriptor_t pin_stlink_detect = PIN_DESC(STLINK_GND_TEST_GPIO_Port, STLINK_GND_TEST_Pin, 1, "STLINK_DETECT");
 
 /* Private function prototypes -----------------------------------------------*/
-static osStatus_t _spi_bus_af_mode(void);
-static osStatus_t _spi_bus_hiz_mode(void);
 static osStatus_t _create_gpio_mutex(void);
 static osStatus_t _delete_gpio_mutex(void);
 
@@ -86,59 +83,6 @@ static osStatus_t _delete_gpio_mutex(void)
     return osOK;
 }
 
-static osStatus_t _spi_bus_af_mode(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
-
-    /* Configured each pin on its correct hardware port */
-    GPIO_InitStruct.Pin = pin_spi_sck.pin;
-    HAL_GPIO_Init(pin_spi_sck.port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = pin_spi_miso.pin;
-    HAL_GPIO_Init(pin_spi_miso.port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = pin_spi_mosi.pin;
-    HAL_GPIO_Init(pin_spi_mosi.port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = pin_spi_cso.pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(pin_spi_cso.port, &GPIO_InitStruct);
-
-    /* Direct Fast write to make CSO HIGH */
-    PIN_Set_F(&pin_spi_cso);
-
-    return osOK;
-}
-
-static osStatus_t _spi_bus_hiz_mode(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-
-    /* Tristate all SPI pins on their respective hardware ports */
-    GPIO_InitStruct.Pin = pin_spi_sck.pin;
-    HAL_GPIO_Init(pin_spi_sck.port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = pin_spi_miso.pin;
-    HAL_GPIO_Init(pin_spi_miso.port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = pin_spi_mosi.pin;
-    HAL_GPIO_Init(pin_spi_mosi.port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = pin_spi_cso.pin;
-    HAL_GPIO_Init(pin_spi_cso.port, &GPIO_InitStruct);
-
-    return osOK;
-}
-
 /* Public API Functions ------------------------------------------------------*/
 
 osStatus_t PIN_MGMT_Init(Pin_Mgmt_Config_t* config)
@@ -146,8 +90,6 @@ osStatus_t PIN_MGMT_Init(Pin_Mgmt_Config_t* config)
     if (config) {
         bsp_pin_config = *config;
     }
-    
-    spi_bus_acquired = 0;
     return _create_gpio_mutex();
 }
 
@@ -219,8 +161,6 @@ uint8_t PIN_Read(const Pin_Descriptor_t* pin)
 osStatus_t PIN_Set_F(const Pin_Descriptor_t* pin)
 {
     if (!pin || !pin->port) return osErrorParameter;
-
-    /* Write directly to GPIO Bit Set Reset Register (BSRR) - Atomic & Ultra Fast */
     pin->port->BSRR = pin->pin;
     return osOK;
 }
@@ -228,8 +168,6 @@ osStatus_t PIN_Set_F(const Pin_Descriptor_t* pin)
 osStatus_t PIN_Reset_F(const Pin_Descriptor_t* pin)
 {
     if (!pin || !pin->port) return osErrorParameter;
-
-    /* Write to the upper half of BSRR register to reset the pin atomically */
     pin->port->BSRR = (uint32_t)pin->pin << 16U;
     return osOK;
 }
@@ -237,8 +175,6 @@ osStatus_t PIN_Reset_F(const Pin_Descriptor_t* pin)
 osStatus_t PIN_Toggle_F(const Pin_Descriptor_t* pin)
 {
     if (!pin || !pin->port) return osErrorParameter;
-
-    /* Read and XOR Output Data Register (ODR) directly */
     pin->port->ODR ^= pin->pin;
     return osOK;
 }
@@ -246,8 +182,6 @@ osStatus_t PIN_Toggle_F(const Pin_Descriptor_t* pin)
 uint8_t PIN_Read_F(const Pin_Descriptor_t* pin)
 {
     if (!pin || !pin->port) return 0;
-
-    /* Read Input Data Register (IDR) directly with zero function overhead */
     return (pin->port->IDR & pin->pin) ? 1 : 0;
 }
 
@@ -289,112 +223,8 @@ uint8_t PIN_GPIO_Mutex_Is_Locked(void)
 }
 
 /* ========================================================================= */
-/*  FPGA AND BUS CONTROLS                                                    */
+/*  STLINK DETECTION & UTILITIES                                             */
 /* ========================================================================= */
-
-osStatus_t FPGA_Reset_OS(uint32_t reset_time_ms)
-{
-    PIN_Reset(&pin_mr_prog);
-    PIN_Delay(reset_time_ms);
-    PIN_Set(&pin_mr_prog);
-    return osOK;
-}
-
-osStatus_t FPGA_Wait_Ready(uint32_t timeout_ms)
-{
-    uint32_t start_tick = HAL_GetTick();
-    
-    while (!FPGA_Is_Ready()) {
-        if ((HAL_GetTick() - start_tick) > timeout_ms) {
-            return osErrorTimeout;
-        }
-        PIN_Delay(10);
-    }
-    
-    return osOK;
-}
-
-uint8_t FPGA_Is_Ready(void)
-{
-    return PIN_Read(&pin_fpga_done);
-}
-
-uint8_t FPGA_Is_In_Reset(void)
-{
-    return (PIN_Read(&pin_mr_prog) == 0) ? 1 : 0;
-}
-
-osStatus_t SPI_Bus_Configure(SPI_Bus_Mode_t mode)
-{
-    switch (mode) {
-        case SPI_BUS_AF_MODE:
-            return _spi_bus_af_mode();
-        case SPI_BUS_HIZ_MODE:
-            return _spi_bus_hiz_mode();
-        default:
-            return osErrorParameter;
-    }
-}
-
-osStatus_t SPI_Bus_Acquire_For_STM32(void)
-{
-    osStatus_t status = PIN_GPIO_Mutex_Acquire(osWaitForever);
-    if (status != osOK) {
-        return status;
-    }
-
-    if (spi_bus_acquired) {
-        PIN_GPIO_Mutex_Release();
-        return osOK;
-    }
-
-    status = SPI_Bus_Configure(SPI_BUS_AF_MODE);
-    if (status == osOK) {
-        spi_bus_acquired = 1;
-    }
-
-    PIN_GPIO_Mutex_Release();
-    return status;
-}
-
-osStatus_t SPI_Bus_Release_To_FPGA(void)
-{
-    osStatus_t status = PIN_GPIO_Mutex_Acquire(osWaitForever);
-    if (status != osOK) {
-        return status;
-    }
-
-    if (!spi_bus_acquired) {
-        PIN_GPIO_Mutex_Release();
-        return osOK;
-    }
-
-    status = SPI_Bus_Configure(SPI_BUS_HIZ_MODE);
-    if (status == osOK) {
-        spi_bus_acquired = 0;
-    }
-
-    PIN_GPIO_Mutex_Release();
-    return status;
-}
-
-osStatus_t SPI_Bus_Hold_For_Reset(void)
-{
-    if (FPGA_Is_In_Reset()) {
-        return SPI_Bus_Acquire_For_STM32();
-    }
-    return osError;
-}
-
-uint8_t SPI_Bus_Is_Acquired(void)
-{
-    uint8_t acquired = 0;
-    if (PIN_GPIO_Mutex_Acquire(10) == osOK) {
-        acquired = spi_bus_acquired;
-        PIN_GPIO_Mutex_Release();
-    }
-    return acquired;
-}
 
 uint8_t STLINK_Is_Connected(void)
 {
