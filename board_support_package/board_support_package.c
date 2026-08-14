@@ -239,101 +239,45 @@ float cpu_temperature = 0.0f;
 #define TS_CAL1_ADDR     ((volatile uint16_t*)0x1FFF7A2CU)
 #define TS_CAL2_ADDR     ((volatile uint16_t*)0x1FFF7A30U)
 
-/**
-  * @brief  Enhanced internal CPU temperature reading.
-  *         Uses factory-calibrated values if valid, otherwise automatically
-  *         falls back to your physically-tested and verified formula.
-  *         All comments in English.
-  * @param  filter_enable: 1 to enable moving average filter, 0 for raw reading
-  * @param  filter_samples: Number of samples for moving average (1-32)
-  * @retval Filtered temperature in degrees Celsius
-  */
-float Read_Temperature_Enhanced(uint8_t filter_enable, uint8_t filter_samples)
-{
-    HAL_StatusTypeDef status;
-    uint32_t adc_value;
-    static float filter_buffer[32] = {0};
-    static uint8_t filter_idx = 0;
-    static uint8_t filter_ready = 0;
-    float sum = 0;
-    uint8_t i, valid_samples;
 
-    /* Clamp filter samples to valid range */
-    if (filter_samples < 1) filter_samples = 1;
-    if (filter_samples > 32) filter_samples = 32;
 
-    /* 1. CRITICAL: Ensure the Temperature Sensor and VREFINT channels are enabled */
+static	float Read_Temperature_Enhanced(void) {
+    uint32_t adc_value = 0;
+    float temp = 0.0f;
+
     if ((ADC->CCR & ADC_CCR_TSVREFE) == 0) {
         ADC->CCR |= ADC_CCR_TSVREFE;
-        delay_us(20); /* Wait for the internal sensor to wake up */
+        delay_us(20);
     }
 
-    /* 2. Start ADC conversion */
-    HAL_ADC_Start(&hadc1);
-    status = HAL_ADC_PollForConversion(&hadc1, 4);
-
-    if (status != HAL_OK) {
+    /* Берем среднее из 8 измерений подряд для подавления шума */
+    for (int i = 0; i < 8; i++) {
+        HAL_ADC_Start(&hadc1);
+        if (HAL_ADC_PollForConversion(&hadc1, 4) == HAL_OK) {
+            adc_value += HAL_ADC_GetValue(&hadc1);
+        }
         HAL_ADC_Stop(&hadc1);
-        cpu_temperature = -999.0f;
-        return cpu_temperature;
     }
+    adc_value /= 8;
 
-    /* 3. Retrieve raw conversion value */
-    adc_value = HAL_ADC_GetValue(&hadc1);
-    HAL_ADC_Stop(&hadc1);
-
-    /* 4. Try high-accuracy calculation using factory calibration registers */
     uint16_t ts_cal1 = *TS_CAL1_ADDR;
     uint16_t ts_cal2 = *TS_CAL2_ADDR;
 
-    /* Verify if factory calibration registers contain valid values */
-    if (ts_cal2 > ts_cal1 && ts_cal1 != 0xFFFF && ts_cal2 != 0xFFFF)
-    {
-        /* High-accuracy calculation using factory calibration values */
-        cpu_temperature = ((110.0f - 30.0f) / (float)(ts_cal2 - ts_cal1)) * (float)((int32_t)adc_value - ts_cal1) + 30.0f;
+    if (ts_cal2 > ts_cal1 && ts_cal1 != 0xFFFF && ts_cal2 != 0xFFFF) {
+        temp = ((110.0f - 30.0f) / (float)(ts_cal2 - ts_cal1)) * (float)((int32_t)adc_value - ts_cal1) + 30.0f;
+    } else {
+        float voltage = (float)adc_value * 3.3f / 4095.0f;
+        temp = 25.0f + ((voltage - 0.76f) / 0.0025f);
     }
-    else
-    {
-        /* Safe fallback to your trusted, heat-gun-tested typical formula if calibration data is invalid */
-        adc_voltage = (float)adc_value * 3.3f / 4095.0f;
-        cpu_temperature = 25.0f + ((adc_voltage - 0.76f) / 0.0025f);
-    }
-
-    /* 5. Apply moving average filtering if enabled */
-    if (filter_enable && filter_samples > 1) {
-        /* Add new sample to circular buffer */
-        filter_buffer[filter_idx] = cpu_temperature;
-        filter_idx = (filter_idx + 1) % filter_samples;
-
-        /* Set buffer ready flag on first full loop */
-        if (!filter_ready && filter_idx == 0) {
-            filter_ready = 1;
-        }
-
-        /* Determine number of valid samples to average */
-        if (filter_ready) {
-            valid_samples = filter_samples;
-        } else {
-            valid_samples = filter_idx;
-        }
-
-        /* Calculate current moving average */
-        if (valid_samples > 0) {
-            for (i = 0; i < valid_samples; i++) {
-                sum += filter_buffer[i];
-            }
-            cpu_temperature = sum / (float)valid_samples;
-        }
-    }
-
-    return cpu_temperature;
+    return temp;
 }
+
 
 /**
  * @brief  Simple wrapper for backward compatibility.
  */
 float Read_Temperature(void) {
-    return Read_Temperature_Enhanced(1, 24);
+    return Read_Temperature_Enhanced();
 }
 
 
