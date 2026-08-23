@@ -175,7 +175,14 @@ osStatus_t PIN_Reset_F(const Pin_Descriptor_t* pin)
 osStatus_t PIN_Toggle_F(const Pin_Descriptor_t* pin)
 {
     if (!pin || !pin->port) return osErrorParameter;
-    pin->port->ODR ^= pin->pin;
+
+    /* Atomic BSRR-based toggle to prevent RMW corruption of adjacent pins on the same port */
+    uint32_t odr = pin->port->ODR;
+    if (odr & pin->pin) {
+        pin->port->BSRR = (uint32_t)pin->pin << 16U; /* Reset pin */
+    } else {
+        pin->port->BSRR = pin->pin;                   /* Set pin */
+    }
     return osOK;
 }
 
@@ -228,7 +235,8 @@ uint8_t PIN_GPIO_Mutex_Is_Locked(void)
 
 uint8_t STLINK_Is_Connected(void)
 {
-    return (PIN_Read(&pin_stlink_detect) == 0) ? 1 : 0;
+    /* Use fast atomic read: zero overhead and safe to call before RTOS scheduler starts */
+    return (PIN_Read_F(&pin_stlink_detect) == 0) ? 1 : 0;
 }
 
 osStatus_t PIN_Delay(uint32_t ms)

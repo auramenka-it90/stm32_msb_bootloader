@@ -175,9 +175,9 @@ void jump_main_application(uint32_t addr) {
     /* 1. Read the Stack Pointer (SP) value from the start of the target firmware image */
     uint32_t stack_pointer = *(__IO uint32_t*)addr;
 
-    /* 2. Verify that the Stack Pointer lies within SRAM (0x20xxxxxx) or CCMRAM (0x10xxxxxx) */
-    if (((stack_pointer & 0xFF000000) == 0x20000000) ||
-        ((stack_pointer & 0xFF000000) == 0x10000000)) {
+    /* 2. Verify that the Stack Pointer lies strictly within STM32F411 SRAM range (0x20000000 - 0x20020000, max 128KB) */
+    /* Note: STM32F411 does not have CCMRAM (0x10000000), removed legacy check */
+    if ((stack_pointer >= 0x20000000U) && (stack_pointer <= 0x20020000U)) {
 
         /* VALID FIRMWARE DETECTED! Proceed to safe bootloader teardown */
 
@@ -206,12 +206,24 @@ void jump_main_application(uint32_t addr) {
         /* 5. Disable instruction/data caches (ART Accelerator) for a clean start */
         FLASH->ACR &= ~(FLASH_ACR_ICEN | FLASH_ACR_DCEN);
 
-        /* Extract the reset handler address (stored at App base + 4) */
-        JumpAddress = *(__IO uint32_t*)(addr + 4);
-        Jump_To_Application = (void (*)(void))JumpAddress;
+        /* 6. Switch Thread mode stack from PSP (used by FreeRTOS task) back to MSP */
+        /* Reset CONTROL register (SPSEL bit = 0: use MSP, nPRIV bit = 0: privileged) */
+        __set_CONTROL(0);
 
         /* Set the Main Stack Pointer (MSP) for the new application */
         __set_MSP(stack_pointer);
+
+        /* 7. Instruction and Data Synchronization Barriers */
+        /* Ensure memory operations and pipeline are flushed before jump */
+        __DSB();
+        __ISB();
+
+        /* Optional: Set Vector Table Offset to Target Application base address */
+        SCB->VTOR = addr;
+
+        /* Extract the reset handler address (stored at App base + 4) */
+        JumpAddress = *(__IO uint32_t*)(addr + 4);
+        Jump_To_Application = (void (*)(void))JumpAddress;
 
         /* Execute the jump (no return from this point) */
         Jump_To_Application();
