@@ -19,6 +19,8 @@ extern	 bool is_soft_reset_detected;
 extern	float adc_voltage;
 extern	float	cpu_temperature;
 
+// reset
+extern 	bool is_soft_reset_detected;
 
 int	init_terminal_signals(void);
 

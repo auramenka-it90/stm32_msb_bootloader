@@ -1,3 +1,5 @@
+/* --- START OF FILE terminal.c --- */
+
 /**
  * ******************************************************************************
  * @file    terminal.c
@@ -58,7 +60,7 @@ static	char* uint32_to_string(uint32_t n, char* buffer, size_t buffer_size);
 /* Memory Devices Descriptor Array - extended to support Internal CPU Flash */
 Dev_descriptor_t dev_descr_arr[_ID_DEV_NUM] =
 {
-    [0] = {
+    [_ID_FPGA_FLASH] = {
         /* Device 0: FPGA W25Q128 External SPI Flash */
         "DD4-W25Q128JV/M_ID=",
         W25Q128_PAGE_SIZE,
@@ -66,7 +68,7 @@ Dev_descriptor_t dev_descr_arr[_ID_DEV_NUM] =
         _TERMINAL_FPFA_MAX_NUM_BLOCK_ * W25Q128_BLOCK_SIZE,
         W25Q128_TIMEOUT_CHIP_ERASE_S,
         W25Q128_TIMEOUT_CHIP_ERASE_S,
-        dfalse,
+        dtrue, /* Auto-finish enabled */
         0,
         0
     },
@@ -111,7 +113,7 @@ bool terminal_init(void) {
 	SYS_Config.FuncPtr_SelfTest = &sys_SelfTest;
 	SYS_Config.FuncPtr_SysReset = &sys_Reset;
 
-	SYS_Config.system_info = device_info_create();
+	SYS_Config.system_info = (char*)get_device_info();
 
 	SYS_Init(&SYS_Config);
 	PROG_Init(&PROG_Config);
@@ -185,8 +187,11 @@ void terminal_task(void) {
 #endif
 
     if (((osKernelGetTickCount() - tick_start) >= boot_timeout) && !fl_stay_here) {
-#if (BSP_PERMISSION_JUMP_APPL_ == 1)
+
+        /* Фиксируем, что таймаут вышел, чтобы больше не заходить в этот блок */
         fl_stay_here = true;
+
+#if (BSP_PERMISSION_JUMP_APPL_ == 1)
         bool can_jump = false;
 
 #if (BSP_CHACK_APPL_CRC == 1)
@@ -372,47 +377,32 @@ static dboolean prg_Write(const du8 dev_num, du8 *const pusData, const du32 ulSt
 	return result;
 }
 
-/**
- * @brief  Performs physical reset of the programmed component if supported.
- */
 static void prg_Reset(const du8 dev_num) {
-	switch (dev_num) {
-        case _ID_FPGA_FLASH: {
-        	/*
-            SPI_Bus_Release_To_FPGA();
-            FPGA_Reset_OS(10);
-            */
+    switch (dev_num) {
+        case _ID_FPGA_FLASH:
+            /* Ничего не делаем. FPGA остается в аппаратном сбросе. */
             break;
-        }
-        case _ID_APPL_FLASH: {
-            /* No specific hardware reset sequence needed for internal MCU Flash */
+        case _ID_APPL_FLASH:
             break;
-        }
-        default: break;
-	}
+        default:
+            break;
+    }
 }
 
-/**
- * @brief  Finalizes the programming transaction.
- */
 static dboolean prg_Finish(const du8 dev_num) {
-	dboolean result = dfalse;
-	switch (dev_num) {
-        case _ID_FPGA_FLASH: {
-          /*
-            SPI_Bus_Release_To_FPGA();
-            FPGA_Reset_OS(10);
-          */
+    dboolean result = dfalse;
+    switch (dev_num) {
+        case _ID_FPGA_FLASH:
+            /* Ничего не делаем. FPGA остается в аппаратном сбросе. */
             result = dtrue;
             break;
-        }
-        case _ID_APPL_FLASH: {
+        case _ID_APPL_FLASH:
             result = dtrue;
             break;
-        }
-        default: break;
-	}
-	return result;
+        default:
+            break;
+    }
+    return result;
 }
 
 /* ========================================================================= */
@@ -469,3 +459,5 @@ static char* uint32_to_string(uint32_t n, char *buffer, size_t buffer_size) {
 
     return buffer;
 }
+
+/* --- END OF FILE terminal.c --- */

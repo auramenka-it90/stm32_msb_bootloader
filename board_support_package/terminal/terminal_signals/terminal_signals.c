@@ -7,6 +7,7 @@
 
 static	char *sDEV = "";
 static	char *sFLASH = "";
+static  char *sDEBUG = "";
 
 SIGNALS_BEGIN(DSPA_SIGNALS_NAME)
 
@@ -21,7 +22,10 @@ SIGNALS_BEGIN(DSPA_SIGNALS_NAME)
 			_BYTE_R_("JDECID1", bsp_flash.memory_type,&sFLASH),
 			_BYTE_R_("JDECID2", bsp_flash.capacity_id,&sFLASH),
 			_U64_R_("UID", 	bsp_flash.unique_id,&sFLASH),
-
+		_STRING_R_("board health", sDEBUG, &sDEV),
+			_BOOL_R_("soft reset", is_soft_reset_detected, &sDEBUG),
+			_FLOAT_R_("voltage (volt)", adc_voltage, &sDEBUG),
+			_FLOAT_R_("board temperature (℃)", cpu_temperature, &sDEBUG)
 SIGNALS_END(DSPA_SIGNALS_NAME)
 
 

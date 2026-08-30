@@ -74,7 +74,6 @@ typedef struct {
     SPI_HandleTypeDef *hspi;
     GPIO_TypeDef *cs_port;
     uint16_t cs_pin;
-    uint8_t use_pin_mgmt;     /* Flag to enable hardware pin management */
 
     uint8_t initialized;
     uint32_t capacity;
@@ -107,10 +106,6 @@ extern W25Q128_Handle_t bsp_flash; /* Global Flash Handle */
 
 /* Public functions */
 osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin);
-osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
-                          GPIO_TypeDef *cs_port, uint16_t cs_pin,
-                          uint8_t use_pin_mgmt);
-osStatus_t W25Q128_Init_With_PinMgmt(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi);
 osStatus_t W25Q128_DeInit(W25Q128_Handle_t *flash);
 
 /* Basic operations */

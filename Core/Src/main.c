@@ -50,7 +50,7 @@
 
 /* USER CODE BEGIN PV */
 /* Global flag indicating if the current boot is a Software Reset (Warm Boot) */
-volatile bool is_soft_reset_detected = false;
+bool is_soft_reset_detected = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/

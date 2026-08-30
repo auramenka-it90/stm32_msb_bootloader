@@ -1,3 +1,5 @@
+/* --- START OF FILE freertos.c --- */
+
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
@@ -37,7 +39,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/* Флаг синхронизации для старта задач после инициализации железа */
+#define TASK_START_FLAG 0x01U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,14 +59,14 @@ osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for TerminalTask */
 osThreadId_t TerminalTaskHandle;
 const osThreadAttr_t TerminalTask_attributes = {
   .name = "TerminalTask",
   .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for TemperatureTask */
 osThreadId_t TemperatureTaskHandle;
@@ -141,20 +144,18 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
 
-	osThreadSuspend(TemperatureTaskHandle);
-	osThreadSuspend(TerminalTaskHandle);
-
     /* Run board-level POST and hardware initialization */
+    /* Любые задержки (osDelay) внутри этой функции теперь абсолютно безопасны */
 	init_hardware();
 
-    /* Cascade resume tasks based on POST diagnostic results */
+    /* Cascade start tasks based on POST diagnostic results using Thread Flags */
 	if (test_status_hardware(_B_FAULT_TERMINAL_)) {
-		osThreadResume(TerminalTaskHandle);
+        osThreadFlagsSet(TerminalTaskHandle, TASK_START_FLAG);
 	}
 
-    /* CPU internal temperature is highly reliable, always resume */
+    /* CPU internal temperature is highly reliable, always start */
 	if (test_status_hardware(_B_FAULT_PINS_)) {
-		osThreadResume(TemperatureTaskHandle);
+        osThreadFlagsSet(TemperatureTaskHandle, TASK_START_FLAG);
 	}
 
 	for (;;) {
@@ -175,6 +176,10 @@ void StartDefaultTask(void *argument)
 void StartTerminalTask(void *argument)
 {
   /* USER CODE BEGIN StartTerminalTask */
+
+  /* Ожидаем флага от defaultTask. Задача спит и не потребляет ресурсы CPU. */
+  osThreadFlagsWait(TASK_START_FLAG, osFlagsWaitAny, osWaitForever);
+
   /* Infinite loop */
   for(;;)
   {
@@ -193,6 +198,10 @@ void StartTerminalTask(void *argument)
 void StartTemperatureTask(void *argument)
 {
   /* USER CODE BEGIN StartTemperatureTask */
+
+  /* Ожидаем флага от defaultTask. Задача спит и не потребляет ресурсы CPU. */
+  osThreadFlagsWait(TASK_START_FLAG, osFlagsWaitAny, osWaitForever);
+
   /* Infinite loop */
   for(;;)
   {
@@ -208,3 +217,4 @@ void StartTemperatureTask(void *argument)
 
 /* USER CODE END Application */
 
+/* --- END OF FILE freertos.c --- */
