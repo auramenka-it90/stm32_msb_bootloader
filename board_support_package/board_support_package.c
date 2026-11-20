@@ -16,10 +16,6 @@
 /* Global hardware test result variable */
 uint32_t test_hardware_result = _B_TEST_HARDWARE_SUCCESS_;
 
-/* STM32 pins configuration (use_rtos removed as it is now redundant) */
-Pin_Mgmt_Config_t pin = {
-    .debug_enabled = 1
-};
 
 
 /**
@@ -30,43 +26,28 @@ Pin_Mgmt_Config_t pin = {
 uint32_t init_hardware(void) {
 
     /* 1. PINS CONFIGURATION */
-    /* Must be configured first before memory and other peripherals */
-    if (PIN_MGMT_Init(&pin) != osOK) {
+    if (PIN_MGMT_Init() != osOK) {
         test_hardware_result |= _B_FAULT_PINS_;
     } else {
-        DWT_Init(); /* Initialize microsecond delay generator */
-        FPGA_Reset_OS(10);
-        SPI_Bus_Release_To_FPGA();
+        DWT_Init();
+
+        /* Hold the FPGA in reset */
+        PIN_Reset(&pin_mr_prog);
     }
 
     /* 2. W25Q128 FLASH CONFIGURATION */
-    /* Configure after pins are successfully initialized */
     if (test_status_hardware(_B_FAULT_PINS_)) {
-        if (W25Q128_Init_With_PinMgmt(&bsp_flash, &hspi1) != osOK) {
+
+        /* Initialize Flash without claiming bus ownership */
+        if (W25Q128_Init(&bsp_flash, &hspi1, &pin_spi_cso) != osOK) {
             test_hardware_result |= _B_FAULT_W25Q128_;
         } else {
-            /* Reset FPGA and acquire SPI bus to isolate memory */
-            PIN_Reset(&pin_mr_prog);
-            SPI_Bus_Acquire_For_STM32();
-
-            /* Read flash identification parameters */
             W25Q128_ReadJEDECID(&bsp_flash);
             W25Q128_ReadUID(&bsp_flash);
-
-            /* Release SPI bus to FPGA */
-            SPI_Bus_Release_To_FPGA();
         }
     }
 
-    /* 3. RESTART FPGA TO BOOT FROM FLASH */
-    if (test_status_hardware(_B_FAULT_PINS_)) {
-        if (FPGA_Reset_OS(10) != osOK) {
-            test_hardware_result |= _B_FAULT_PINS_;
-        }
-    }
-
-    /* 4. TERMINAL (eAssist) */
-
+    /* 3. TERMINAL */
     if (!terminal_init()) {
         test_hardware_result |= _B_FAULT_TERMINAL_;
     }
@@ -188,32 +169,59 @@ void jump_main_application(uint32_t addr) {
     /* 1. Read the Stack Pointer (SP) value from the start of the target firmware image */
     uint32_t stack_pointer = *(__IO uint32_t*)addr;
 
-    /* 2. Verify that the Stack Pointer lies within SRAM (0x20xxxxxx) or CCMRAM (0x10xxxxxx) */
-    if (((stack_pointer & 0xFF000000) == 0x20000000) ||
-        ((stack_pointer & 0xFF000000) == 0x10000000)) {
+    /* 2. Verify that the Stack Pointer lies strictly within STM32F411 SRAM range (0x20000000 - 0x20020000, max 128KB) */
+    /* Note: STM32F411 does not have CCMRAM (0x10000000), removed legacy check */
+    if ((stack_pointer >= 0x20000000U) && (stack_pointer <= 0x20020000U)) {
 
         /* VALID FIRMWARE DETECTED! Proceed to safe bootloader teardown */
 
+        /* 3. CRITICAL: Disable all CPU interrupts globally FIRST */
+        /* Prevents ISR execution while hardware is being deinitialized */
+        __disable_irq();
+
         /* Lock the RTOS kernel scheduler to stop task switching */
         osKernelLock();
-
-        /* Deep-clean and deinitialize all hardware peripherals to raw reset states */
-        bsp_deinit();
 
         /* Hard-disable the SysTick timer and clear its registers */
         SysTick->CTRL = 0;
         SysTick->LOAD = 0;
         SysTick->VAL  = 0;
 
-        /* Disable all CPU interrupts globally before executing the jump */
-        __disable_irq();
+        /* Deep-clean and deinitialize all hardware peripherals to raw reset states */
+        bsp_deinit();
+
+        /* 4. CRITICAL: Clear all pending interrupts in the NVIC */
+        /* Ensures the Main App doesn't immediately trigger a stale bootloader interrupt */
+        for (uint8_t i = 0; i < 8; i++) {
+            NVIC->ICER[i] = 0xFFFFFFFFU; /* Disable all interrupts */
+            NVIC->ICPR[i] = 0xFFFFFFFFU; /* Clear all pending flags */
+        }
+
+    /* 5. Disable and invalidate instruction/data caches (ART Accelerator):
+     *    the application starts with an empty cache and re-enables it in SystemInit */
+    __HAL_FLASH_INSTRUCTION_CACHE_DISABLE();
+    __HAL_FLASH_DATA_CACHE_DISABLE();
+    __HAL_FLASH_INSTRUCTION_CACHE_RESET();
+    __HAL_FLASH_DATA_CACHE_RESET();
+
+        /* 6. Switch Thread mode stack from PSP (used by FreeRTOS task) back to MSP */
+        /* Reset CONTROL register (SPSEL bit = 0: use MSP, nPRIV bit = 0: privileged) */
+        __set_CONTROL(0);
+
+        /* Set the Main Stack Pointer (MSP) for the new application */
+        __set_MSP(stack_pointer);
+
+        /* 7. Instruction and Data Synchronization Barriers */
+        /* Ensure memory operations and pipeline are flushed before jump */
+        __DSB();
+        __ISB();
+
+        /* Optional: Set Vector Table Offset to Target Application base address */
+        SCB->VTOR = addr;
 
         /* Extract the reset handler address (stored at App base + 4) */
         JumpAddress = *(__IO uint32_t*)(addr + 4);
         Jump_To_Application = (void (*)(void))JumpAddress;
-
-        /* Set the Main Stack Pointer (MSP) for the new application */
-        __set_MSP(*(__IO uint32_t*)addr);
 
         /* Execute the jump (no return from this point) */
         Jump_To_Application();
@@ -232,110 +240,113 @@ void jump_main_application(uint32_t addr) {
 /* ========================================================================= */
 
 /* Global ADC values */
-float adc_voltage = 0.0f;
+float adc_voltage = 0.0f;   /* Temperature sensor voltage, V */
+float real_vref = 3.3f;     /* Measured VDDA via VREFINT, V */
 float cpu_temperature = 0.0f;
 
-/* STM32F411 Factory Calibration Register Addresses */
-/* TS_CAL1: Raw ADC value at 30 °C, V_DDA = 3.3V (typically around 940-960) */
-/* TS_CAL2: Raw ADC value at 110 °C, V_DDA = 3.3V (typically around 1210-1230) */
-#define TS_CAL1_ADDR     ((volatile uint16_t*)0x1FFF7A2CU)
-#define TS_CAL2_ADDR     ((volatile uint16_t*)0x1FFF7A30U)
+/* Factory calibration addresses from HAL (stm32f4xx_ll_adc.h):
+   VREFINT_CAL_ADDR      0x1FFF7A2A - VREFINT raw @30C, VDDA=3.3V
+   TEMPSENSOR_CAL1_ADDR  0x1FFF7A2C - sensor raw @30C,  VDDA=3.3V (DS8623 Table 72)
+   TEMPSENSOR_CAL2_ADDR  0x1FFF7A2E - sensor raw @110C, VDDA=3.3V (DS8623 Table 72) */
 
-/**
-  * @brief  Enhanced internal CPU temperature reading.
-  *         Uses factory-calibrated values if valid, otherwise automatically
-  *         falls back to your physically-tested and verified formula.
-  *         All comments in English.
-  * @param  filter_enable: 1 to enable moving average filter, 0 for raw reading
-  * @param  filter_samples: Number of samples for moving average (1-32)
-  * @retval Filtered temperature in degrees Celsius
-  */
-float Read_Temperature_Enhanced(uint8_t filter_enable, uint8_t filter_samples)
-{
-    HAL_StatusTypeDef status;
-    uint32_t adc_value;
-    static float filter_buffer[32] = {0};
-    static uint8_t filter_idx = 0;
-    static uint8_t filter_ready = 0;
-    float sum = 0;
-    uint8_t i, valid_samples;
+#define ADC_FULL_SCALE       4095.0f
+#define TEMP_ERROR_VALUE     (-999.0f)
+#define TEMP_AVG_PAIRS       8U       /* Number of (VREFINT, TEMP) pairs averaged per call */
+#define TEMP_CONV_TIMEOUT_MS 10U
 
-    /* Clamp filter samples to valid range */
-    if (filter_samples < 1) filter_samples = 1;
-    if (filter_samples > 32) filter_samples = 32;
+static float Read_Temperature_Enhanced(void) {
+    static uint8_t ts_ready = 0U;
+    static uint16_t cal1 = 0xFFFFU, cal2 = 0xFFFFU, vref_cal = 0xFFFFU;
+    uint32_t vref_sum = 0, temp_sum = 0;
+    uint32_t vref_avg, temp_avg;
+    float v_c1, v_c2, temp;
+    uint8_t good = 0U;
+    uint8_t ok = 1U;
+    uint8_t i;
 
-    /* 1. CRITICAL: Ensure the Temperature Sensor and VREFINT channels are enabled */
-    if ((ADC->CCR & ADC_CCR_TSVREFE) == 0) {
-        ADC->CCR |= ADC_CCR_TSVREFE;
-        delay_us(20); /* Wait for the internal sensor to wake up */
+    /* One-time init: enable internal channels (VREFINT startup up to 1 ms)
+       and latch factory calibration (immutable ROM values). */
+    if (ts_ready == 0U) {
+        if ((ADC->CCR & ADC_CCR_TSVREFE) == 0U) {
+            ADC->CCR |= ADC_CCR_TSVREFE;
+            HAL_Delay(2);
+        }
+        cal1 = *TEMPSENSOR_CAL1_ADDR;
+        cal2 = *TEMPSENSOR_CAL2_ADDR;
+        vref_cal = *VREFINT_CAL_ADDR;
+        ts_ready = 1U;
     }
 
-    /* 2. Start ADC conversion */
-    HAL_ADC_Start(&hadc1);
-    status = HAL_ADC_PollForConversion(&hadc1, 4);
+    /* Sequencer: Rank1 = VREFINT, Rank2 = TEMP SENSOR, continuous scan */
+    if (HAL_ADC_Start(&hadc1) != HAL_OK) {
+        ok = 0U;
+    }
 
-    if (status != HAL_OK) {
-        HAL_ADC_Stop(&hadc1);
-        cpu_temperature = -999.0f;
+    /* Discard first pair (transient right after ADC start) */
+    if (ok && ((HAL_ADC_PollForConversion(&hadc1, TEMP_CONV_TIMEOUT_MS) != HAL_OK) ||
+               (HAL_ADC_PollForConversion(&hadc1, TEMP_CONV_TIMEOUT_MS) != HAL_OK))) {
+        ok = 0U;
+    }
+
+    /* Average BOTH channels over TEMP_AVG_PAIRS pairs */
+    for (i = 0U; (ok != 0U) && (i < TEMP_AVG_PAIRS); i++) {
+        if (HAL_ADC_PollForConversion(&hadc1, TEMP_CONV_TIMEOUT_MS) != HAL_OK) {
+            ok = 0U;
+            break;
+        }
+        vref_sum += HAL_ADC_GetValue(&hadc1);   /* Rank1 = VREFINT */
+        if (HAL_ADC_PollForConversion(&hadc1, TEMP_CONV_TIMEOUT_MS) != HAL_OK) {
+            ok = 0U;
+            break;
+        }
+        temp_sum += HAL_ADC_GetValue(&hadc1);   /* Rank2 = TEMP SENSOR */
+        good++;
+    }
+    HAL_ADC_Stop(&hadc1);
+
+    vref_avg = (good != 0U) ? (vref_sum / good) : 0U;
+    temp_avg = (good != 0U) ? (temp_sum / good) : 0U;
+
+    if ((ok == 0U) || (good == 0U) || (vref_avg == 0U)) {
+        cpu_temperature = TEMP_ERROR_VALUE;
         return cpu_temperature;
     }
 
-    /* 3. Retrieve raw conversion value */
-    adc_value = HAL_ADC_GetValue(&hadc1);
-    HAL_ADC_Stop(&hadc1);
-
-    /* 4. Try high-accuracy calculation using factory calibration registers */
-    uint16_t ts_cal1 = *TS_CAL1_ADDR;
-    uint16_t ts_cal2 = *TS_CAL2_ADDR;
-
-    /* Verify if factory calibration registers contain valid values */
-    if (ts_cal2 > ts_cal1 && ts_cal1 != 0xFFFF && ts_cal2 != 0xFFFF)
-    {
-        /* High-accuracy calculation using factory calibration values */
-        cpu_temperature = ((110.0f - 30.0f) / (float)(ts_cal2 - ts_cal1)) * (float)((int32_t)adc_value - ts_cal1) + 30.0f;
-    }
-    else
-    {
-        /* Safe fallback to your trusted, heat-gun-tested typical formula if calibration data is invalid */
-        adc_voltage = (float)adc_value * 3.3f / 4095.0f;
-        cpu_temperature = 25.0f + ((adc_voltage - 0.76f) / 0.0025f);
+    /* 1. Real VDDA from VREFINT channel (AN4073):
+       VDDA = V_CAL_VDDA * VREFINT_CAL / VREFINT_DATA.
+       VREFINT_CAL was acquired with VDDA = 3.3 V. */
+    if ((vref_cal != 0xFFFFU) && (vref_cal != 0x0000U)) {
+        real_vref = (3.3f * (float)vref_cal) / (float)vref_avg;
+    } else {
+        real_vref = 3.3f;                        /* Corrupted calibration -> nominal */
     }
 
-    /* 5. Apply moving average filtering if enabled */
-    if (filter_enable && filter_samples > 1) {
-        /* Add new sample to circular buffer */
-        filter_buffer[filter_idx] = cpu_temperature;
-        filter_idx = (filter_idx + 1) % filter_samples;
+    /* 2. Sensor voltage in volts (independent of actual supply) */
+    adc_voltage = ((float)temp_avg * real_vref) / ADC_FULL_SCALE;
 
-        /* Set buffer ready flag on first full loop */
-        if (!filter_ready && filter_idx == 0) {
-            filter_ready = 1;
-        }
+    /* 3. Temperature from per-chip calibration (sign-agnostic: slope derived
+       from the actual calibration points, works for either slope sign). */
+    v_c1 = 3.3f * (float)cal1 / ADC_FULL_SCALE;  /* Sensor voltage at 30  °C */
+    v_c2 = 3.3f * (float)cal2 / ADC_FULL_SCALE;  /* Sensor voltage at 110 °C */
 
-        /* Determine number of valid samples to average */
-        if (filter_ready) {
-            valid_samples = filter_samples;
-        } else {
-            valid_samples = filter_idx;
-        }
-
-        /* Calculate current moving average */
-        if (valid_samples > 0) {
-            for (i = 0; i < valid_samples; i++) {
-                sum += filter_buffer[i];
-            }
-            cpu_temperature = sum / (float)valid_samples;
-        }
+    if ((cal1 != 0xFFFFU) && (cal2 != 0xFFFFU) && (cal1 != cal2)) {
+        temp = 30.0f + ((adc_voltage - v_c1) * (110.0f - 30.0f) / (v_c2 - v_c1));
+    } else {
+        /* Corrupted factory calibration -> datasheet typical values:
+           V25 = 0.76 V, average slope 2.5 mV/degC (DS8623 Table 71) */
+        temp = 25.0f + ((adc_voltage - 0.76f) / 0.0025f);
     }
 
+    cpu_temperature = temp;
     return cpu_temperature;
 }
+
 
 /**
  * @brief  Simple wrapper for backward compatibility.
  */
 float Read_Temperature(void) {
-    return Read_Temperature_Enhanced(1, 24);
+    return Read_Temperature_Enhanced();
 }
 
 
@@ -347,10 +358,13 @@ float Read_Temperature(void) {
  * @brief  Initializes the Data Watchpoint and Trace (DWT) cycle counter.
  */
 void DWT_Init(void) {
+    /* Trace block must be clocked before its registers accept writes */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+
+    /* DWT->LAR (0xE0001FB0): unlocked on STM32F4 regardless, required on M7 parts */
     volatile uint32_t *dwt_lar = (volatile uint32_t *)0xE0001FB0U;
     *dwt_lar = 0xC5ACCE55U;
 
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 }

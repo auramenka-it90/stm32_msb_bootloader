@@ -11,7 +11,8 @@
 //	test hardware
 extern	uint32_t	test_hardware_result;
 
-
+// reset source
+extern	 bool is_soft_reset_detected;
 
 
 //	ADC

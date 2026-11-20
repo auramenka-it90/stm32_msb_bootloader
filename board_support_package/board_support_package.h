@@ -33,13 +33,15 @@
  *         1: W25Q128 uses internal RTOS mutexes for thread-safe access.
  *         0: W25Q128 mutexes are disabled for raw performance.
  */
-#define BSP_W25Q128_USE_MUTEX      1  /* 1: Mutex active, 0: Mutex bypassed */
+#define BSP_W25Q128_USE_MUTEX		1  /* 1: Mutex active, 0: Mutex bypassed */
 
-#define BSP_MSB0_PSPM1_BOARD	   0  /* 0: MSB board, 1: PSPPM board */
+#define BSP_MSB0_PSPM1_BOARD	   	0  /* 0: MSB board, 1: PSPPM board */
 
-#define	BSP_CHACK_APPL_CRC		   0  /* 0: nop, 1: check CRC + len   */
+#define	BSP_CHACK_APPL_CRC		   	1  /* 0: nop, 1: check CRC + len   */
 
-#define BSP_PERMISSION_JUMP_APPL_  0  /* 0: nop, 1: jump */
+#define BSP_PERMISSION_JUMP_APPL_  	1  /* 0: nop, 1: jump */
+
+#define	BSP_PERMISSION_FAST_JUMP 	0  /* 0: jump after delay=5sec, 1 - quick start */
 
 /* ========================================================================= */
 /*  STM32 HARDWARE PERIPHERAL HANDLES                                        */
@@ -84,6 +86,13 @@ extern CRC_HandleTypeDef  hcrc;
 #define _B_FAULT_W25Q128_           B4  /* W25Q128 memory access fault */
 #define _B_FAULT_FPGA_				B5
 
+
+/* ========================================================================= */
+/*  GLOBAL MEASUREMENT RESULTS                                               */
+/* ========================================================================= */
+extern float adc_voltage;      /* Temperature sensor voltage, V */
+extern float real_vref;        /* Measured VDDA via VREFINT, V */
+extern float cpu_temperature;  /* CPU temperature, degrees C (TEMP_ERROR_VALUE on fault) */
 
 /* ========================================================================= */
 /*  GLOBAL BSP MODULE FUNCTION PROTOTYPES                                    */

@@ -1,29 +1,47 @@
+/**
+ ******************************************************************************
+ * @file    version_control.h
+ * @brief   Software/Hardware version information module for Bootloader.
+ *          Supports dual-board configuration (MSB / PSPM) with Zero-RAM overhead.
+ *          All comments in ASCII English.
+ ******************************************************************************
+ */
+
 #ifndef VERSION_CONTROL_H_
 #define VERSION_CONTROL_H_
 
 #include "board_support_package.h"
 
-/*
- * Comment out if you need to change the compilation date
+/* ========================================================================= */
+/*  STATIC STRING DEFINITIONS (BOOTLOADER)                                   */
+/* ========================================================================= */
+
+#if (BSP_MSB0_PSPM1_BOARD == 0)
+    /* --- Settings for the MSB board --- */
+    #define _VC_PRODUCT_NUMBER_     "Mode switching board (MSB)\n"
+    #define _VC_BOARD_NUMBER_       "Board:  DIAS.901.02.00.200\n"
+    #define _VC_CHIP_DESIGNATION_   "Chip:   DD16 - STM32F411RET6TR\n"
+    #define _VC_SOFT_NAME_          "Software: bootloader\n"
+    #define _VC_SOFT_NOTE_          "Produced by mr. Andrew Auramenka \n"
+    #define _VC_SOFT_VERSION_       "Ver. 2.0\n"
+#else
+    /* --- Settings for the PSPM board --- */
+    #define _VC_PRODUCT_NUMBER_     "Primary signal processing module (PSPM)\n"
+    #define _VC_BOARD_NUMBER_       "Board:  DIAS.901.02.00.300\n"
+    #define _VC_CHIP_DESIGNATION_   "Chip:   DD1 - STM32F411RET6TR\n"
+    #define _VC_SOFT_NAME_          "Software: bootloader\n"
+    #define _VC_SOFT_NOTE_          "Produced by mr. Andrew Auramenka \n"
+    #define _VC_SOFT_VERSION_       "Ver. 2.0\n"
+#endif
+
+/* ========================================================================= */
+/*  PUBLIC API                                                               */
+/* ========================================================================= */
+
+/**
+ * @brief  Returns pointer to static device info string stored in Flash (.rodata).
+ * @retval const char* Pointer to null-terminated formatted string.
  */
-//#define _VC_MACRO_ENA_DATE_COMPILE_
-#define _VC_SIZE_DEVICE_INFO_STR_ (4*256)
-
-/*
- * Software version 2.1
- */
-#define _SOFT_VERSION_      0
-#define _SOFT_SUBVERSION_   1
-
-/*
- * Version 1.1
- */
-//#define _SOFT_VERSION_BUK_ ((_SOFT_VERSION_<<4)|_SOFT_SUBVERSION_)
-
-// Function to create device info string with password in hex format
-char* device_info_create(void);
-
-// Function to destroy device info string and free memory
-void device_info_destroy(void);
+const char* get_device_info(void);
 
 #endif /* VERSION_CONTROL_H_ */

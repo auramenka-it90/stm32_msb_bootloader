@@ -310,4 +310,15 @@ void USART6_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 
+/**
+  * @brief This function handles EXTI line3 interrupt (TP4 / PC3).
+  * @note  NVIC EXTI3 is intentionally NOT enabled (reserved test point).
+  *        Handler exists so that enabling EXTI3 later cannot land in
+  *        Default_Handler; it only clears the pending flag.
+  */
+void EXTI3_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_3);
+}
+
 /* USER CODE END 1 */

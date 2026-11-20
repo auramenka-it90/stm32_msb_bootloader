@@ -216,6 +216,11 @@ void com_check_timeout(Uart_ctrl_t *uctrl, uint32_t elapsed_time) {
 
 bool 	com_send(Uart_ctrl_t *uctrl, uint8_t *data, uint32_t size) {
 
+	/* Refuse while previous frame is still on the wire: tx_buf is read by DMA in place */
+	if (uctrl->huart->gState != HAL_UART_STATE_READY) {
+		return false;
+	}
+
 	uctrl->flag_tx_cplt=	false;
 
 	if	(uctrl->wrapper==NULL){

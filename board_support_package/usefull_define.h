@@ -96,7 +96,7 @@
 #define         RAD_TO_MIN(rad)     (((rad) * (180.0f * 60.0f)) / _PI)
 #define         MIN_TO_RAD(min)     ((min) * _ANGLE_1_MIN)
 
-/* Angle normalization to range [0, 2pi) и [-pi, pi) */
+/* Angle normalization to ranges [0, 2pi) and [-pi, pi) */
 #define         NORMALIZE_2PI(rad)  (fmodf((rad), _2PI))
 #define         NORMALIZE_PI(rad)   (fmodf((rad) + _PI, _2PI) - _PI)
 

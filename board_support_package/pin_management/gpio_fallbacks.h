@@ -24,14 +24,6 @@ extern "C" {
 #define LED_GREEN_GPIO_Port         GPIOC
 #endif
 
-/* CLK25MHZ */
-#ifndef CLK25MHZ_Pin
-#define CLK25MHZ_Pin                GPIO_PIN_0
-#endif
-#ifndef CLK25MHZ_GPIO_Port
-#define CLK25MHZ_GPIO_Port          GPIOH
-#endif
-
 /* Test Points (TP1 - TP4) */
 #ifndef TP1_Pin
 #define TP1_Pin                     GPIO_PIN_0

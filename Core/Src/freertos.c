@@ -37,7 +37,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/* Synchronization flag to start tasks after hardware initialization */
+#define TASK_START_FLAG 0x01U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,23 +48,20 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-/* Extern declarations to access analog values from board_support_package.c */
-extern float cpu_temperature;
-extern float adc_voltage;
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
   .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for TerminalTask */
 osThreadId_t TerminalTaskHandle;
 const osThreadAttr_t TerminalTask_attributes = {
   .name = "TerminalTask",
   .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityBelowNormal,
 };
 /* Definitions for TemperatureTask */
 osThreadId_t TemperatureTaskHandle;
@@ -141,20 +139,18 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
 
-	osThreadSuspend(TemperatureTaskHandle);
-	osThreadSuspend(TerminalTaskHandle);
-
     /* Run board-level POST and hardware initialization */
+    /* Any delays (osDelay) inside this function are now completely safe */
 	init_hardware();
 
-    /* Cascade resume tasks based on POST diagnostic results */
+    /* Cascade start tasks based on POST diagnostic results using Thread Flags */
 	if (test_status_hardware(_B_FAULT_TERMINAL_)) {
-		osThreadResume(TerminalTaskHandle);
+        osThreadFlagsSet(TerminalTaskHandle, TASK_START_FLAG);
 	}
 
-    /* CPU internal temperature is highly reliable, always resume */
+    /* CPU internal temperature is highly reliable, always start */
 	if (test_status_hardware(_B_FAULT_PINS_)) {
-		osThreadResume(TemperatureTaskHandle);
+        osThreadFlagsSet(TemperatureTaskHandle, TASK_START_FLAG);
 	}
 
 	for (;;) {
@@ -175,6 +171,10 @@ void StartDefaultTask(void *argument)
 void StartTerminalTask(void *argument)
 {
   /* USER CODE BEGIN StartTerminalTask */
+
+  /* Wait for the flag from defaultTask. The task sleeps and consumes no CPU. */
+  osThreadFlagsWait(TASK_START_FLAG, osFlagsWaitAny, osWaitForever);
+
   /* Infinite loop */
   for(;;)
   {
@@ -193,6 +193,10 @@ void StartTerminalTask(void *argument)
 void StartTemperatureTask(void *argument)
 {
   /* USER CODE BEGIN StartTemperatureTask */
+
+  /* Wait for the flag from defaultTask. The task sleeps and consumes no CPU. */
+  osThreadFlagsWait(TASK_START_FLAG, osFlagsWaitAny, osWaitForever);
+
   /* Infinite loop */
   for(;;)
   {

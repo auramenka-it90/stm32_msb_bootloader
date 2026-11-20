@@ -23,6 +23,25 @@ static void W25Q128_CS_Select(W25Q128_Handle_t *flash);
 static void W25Q128_CS_Deselect(W25Q128_Handle_t *flash);
 static osStatus_t W25Q128_TransmitReceive(W25Q128_Handle_t *flash, uint8_t *tx_data, uint8_t *rx_data, uint16_t size);
 static osStatus_t W25Q128_Transmit(W25Q128_Handle_t *flash, uint8_t *data, uint16_t size);
+static uint8_t W25Q128_IsSupportedID(W25Q128_Handle_t *flash);
+
+/* Supported 16 MByte command-set compatible SPI flash parts {id, marketing name}.
+ * Read/program/erase/status commands are identical on all listed parts.
+ * CAUTION: Read Unique ID (0x4B) is NOT uniform: GD/Puya/ISSI need 8 dummy bytes
+ * (driver sends 4 -> UID is garbage), Macronix has no UID command (reads 0xFF).
+ * The UID is informational only - never use it for authentication or decisions. */
+typedef struct {
+    uint8_t     id[3];
+    const char *name;
+} W25Q128_IdEntry_t;
+
+static const W25Q128_IdEntry_t jedec_whitelist[] = {
+    { {0xEF, 0x40, 0x18}, "W25Q128"    }, /* Winbond    */
+    { {0xC8, 0x40, 0x18}, "GD25Q128E"  }, /* GigaDevice */
+    { {0x85, 0x40, 0x18}, "PY25Q128"   }, /* Puya       */
+    { {0x9D, 0x60, 0x18}, "IS25LP128"  }, /* ISSI       */
+    { {0xC2, 0x20, 0x18}, "MX25L128xx" }, /* Macronix   */
+};
 
 /* Mutex Locking Helpers - completely compiled out if BSP_W25Q128_USE_MUTEX = 0 */
 #if (BSP_W25Q128_USE_MUTEX == 1)
@@ -47,19 +66,11 @@ static osStatus_t W25Q128_UnlockMutex(W25Q128_Handle_t *flash) {
 
 /* Chip Select Operations (Using fast Pin Macros) */
 static void W25Q128_CS_Select(W25Q128_Handle_t *flash) {
-    if (flash->use_pin_mgmt) {
-        PIN_Reset_F(&pin_spi_cso);  /* Direct port register write */
-    } else {
-        HAL_GPIO_WritePin(flash->cs_port, flash->cs_pin, GPIO_PIN_RESET);
-    }
+    PIN_Reset_F(flash->cs);  /* Direct port register write */
 }
 
 static void W25Q128_CS_Deselect(W25Q128_Handle_t *flash) {
-    if (flash->use_pin_mgmt) {
-        PIN_Set_F(&pin_spi_cso);    /* Direct port register write */
-    } else {
-        HAL_GPIO_WritePin(flash->cs_port, flash->cs_pin, GPIO_PIN_SET);
-    }
+    PIN_Set_F(flash->cs);    /* Direct port register write */
 }
 
 /* Transmit/Receive Operations (With conditional Mutex Protection) */
@@ -70,7 +81,7 @@ static osStatus_t W25Q128_TransmitReceive(W25Q128_Handle_t *flash, uint8_t *tx_d
     }
 
     W25Q128_CS_Select(flash);
-    HAL_StatusTypeDef hal_status = HAL_SPI_TransmitReceive(flash->hspi, tx_data, rx_data, size, HAL_MAX_DELAY);
+    HAL_StatusTypeDef hal_status = HAL_SPI_TransmitReceive(flash->hspi, tx_data, rx_data, size, W25Q128_TIMEOUT_SPI_MS);
     W25Q128_CS_Deselect(flash);
 
     W25Q128_UnlockMutex(flash);
@@ -85,7 +96,7 @@ static osStatus_t W25Q128_Transmit(W25Q128_Handle_t *flash, uint8_t *data, uint1
     }
 
     W25Q128_CS_Select(flash);
-    HAL_StatusTypeDef hal_status = HAL_SPI_Transmit(flash->hspi, data, size, HAL_MAX_DELAY);
+    HAL_StatusTypeDef hal_status = HAL_SPI_Transmit(flash->hspi, data, size, W25Q128_TIMEOUT_SPI_MS);
     W25Q128_CS_Deselect(flash);
 
     W25Q128_UnlockMutex(flash);
@@ -136,6 +147,26 @@ uint8_t W25Q128_IsJEDECValid(W25Q128_Handle_t *flash) {
     return (flash != NULL) ? flash->jedec_valid : 0;
 }
 
+const char* W25Q128_GetName(W25Q128_Handle_t *flash) {
+    if (flash == NULL || flash->name == NULL) {
+        return "none";
+    }
+    return flash->name;
+}
+
+static uint8_t W25Q128_IsSupportedID(W25Q128_Handle_t *flash) {
+    for (uint32_t i = 0; i < sizeof(jedec_whitelist) / sizeof(jedec_whitelist[0]); i++) {
+        if (flash->manufacturer_id == jedec_whitelist[i].id[0] &&
+            flash->memory_type     == jedec_whitelist[i].id[1] &&
+            flash->capacity_id     == jedec_whitelist[i].id[2]) {
+            flash->name = jedec_whitelist[i].name;
+            return 1;
+        }
+    }
+    flash->name = "unknown";
+    return 0;
+}
+
 /* Read Unique ID */
 osStatus_t W25Q128_ReadUID(W25Q128_Handle_t *flash) {
     if (flash == NULL) {
@@ -179,33 +210,21 @@ uint8_t W25Q128_IsUIDValid(W25Q128_Handle_t *flash) {
 }
 
 /* Flash Initialization */
-osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
-                         GPIO_TypeDef *cs_port, uint16_t cs_pin,
-                         uint8_t use_pin_mgmt) {
-    if (flash == NULL || hspi == NULL) {
+osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
+                       const Pin_Descriptor_t *cs) {
+    if (flash == NULL || hspi == NULL || cs == NULL) {
         return osErrorParameter;
     }
 
     memset(flash, 0, sizeof(W25Q128_Handle_t));
 
     flash->hspi = hspi;
-    flash->cs_port = cs_port;
-    flash->cs_pin = cs_pin;
-    flash->use_pin_mgmt = use_pin_mgmt;
+    flash->cs = cs;
     flash->capacity = W25Q128_FLASH_SIZE;
 
     flash->jedec_valid = 0;
     flash->uid_valid = 0;
 
-    /* Acquire SPI bus pins via Pin Management safely using standard OS types */
-    if (use_pin_mgmt) {
-        osStatus_t pin_status = SPI_Bus_Acquire_For_STM32();
-        if (pin_status != osOK) {
-            return pin_status;
-        }
-    }
-
-    /* Compile Mutex if requested */
 #if (BSP_W25Q128_USE_MUTEX == 1)
     if (static_spi_mutex == NULL) {
         const osMutexAttr_t mutex_attr = W25Q128_MUTEX_ATTR;
@@ -213,9 +232,6 @@ osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
     }
 
     if (static_spi_mutex == NULL) {
-        if (use_pin_mgmt) {
-            SPI_Bus_Release_To_FPGA();
-        }
         return osErrorResource;
     }
     flash->spi_mutex = static_spi_mutex;
@@ -223,18 +239,10 @@ osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
 
     osStatus_t status = W25Q128_ReadJEDECID(flash);
     if (status != osOK) {
-        if (use_pin_mgmt) {
-            SPI_Bus_Release_To_FPGA();
-        }
         return status;
     }
 
-    if (flash->manufacturer_id != W25Q128_MANUFACTURER_ID ||
-        flash->memory_type != W25Q128_MEMORY_TYPE ||
-        flash->capacity_id != W25Q128_CAPACITY) {
-        if (use_pin_mgmt) {
-            SPI_Bus_Release_To_FPGA();
-        }
+    if (!W25Q128_IsSupportedID(flash)) {
         flash->jedec_valid = 0;
         return osError;
     }
@@ -243,30 +251,17 @@ osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
     return osOK;
 }
 
-osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
-                       GPIO_TypeDef *cs_port, uint16_t cs_pin) {
-    return W25Q128_Init_Ex(flash, hspi, cs_port, cs_pin, 0);
-}
-
-osStatus_t W25Q128_Init_With_PinMgmt(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi) {
-    return W25Q128_Init_Ex(flash, hspi, 
-                          SP1_FPGA_CSO_GPIO_Port, SP1_FPGA_CSO_Pin,
-                          1);
-}
-
 osStatus_t W25Q128_DeInit(W25Q128_Handle_t *flash) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
     }
 
-    if (flash->use_pin_mgmt) {
-        SPI_Bus_Release_To_FPGA();
-    }
-
 #if (BSP_W25Q128_USE_MUTEX == 1)
-    if (flash->spi_mutex != NULL) {
-        osMutexDelete(flash->spi_mutex);
+    if (static_spi_mutex != NULL) {
+        osMutexDelete(static_spi_mutex);
+        static_spi_mutex = NULL;
     }
+    flash->spi_mutex = NULL;
 #endif
 
     memset(flash, 0, sizeof(W25Q128_Handle_t));
@@ -368,8 +363,10 @@ osStatus_t W25Q128_ReadData(W25Q128_Handle_t *flash, uint32_t address, uint8_t *
     }
 
     W25Q128_CS_Select(flash);
-    HAL_SPI_Transmit(flash->hspi, tx_buffer, 4, HAL_MAX_DELAY);
-    HAL_StatusTypeDef hal_status = HAL_SPI_Receive(flash->hspi, data, size, HAL_MAX_DELAY);
+    HAL_StatusTypeDef hal_status = HAL_SPI_Transmit(flash->hspi, tx_buffer, 4, W25Q128_TIMEOUT_SPI_MS);
+    if (hal_status == HAL_OK) {
+        hal_status = HAL_SPI_Receive(flash->hspi, data, size, W25Q128_TIMEOUT_SPI_MS);
+    }
     W25Q128_CS_Deselect(flash);
 
     W25Q128_UnlockMutex(flash);
@@ -401,8 +398,10 @@ osStatus_t W25Q128_FastRead(W25Q128_Handle_t *flash, uint32_t address, uint8_t *
     }
 
     W25Q128_CS_Select(flash);
-    HAL_SPI_Transmit(flash->hspi, tx_buffer, 5, HAL_MAX_DELAY);
-    HAL_StatusTypeDef hal_status = HAL_SPI_Receive(flash->hspi, data, size, HAL_MAX_DELAY);
+    HAL_StatusTypeDef hal_status = HAL_SPI_Transmit(flash->hspi, tx_buffer, 5, W25Q128_TIMEOUT_SPI_MS);
+    if (hal_status == HAL_OK) {
+        hal_status = HAL_SPI_Receive(flash->hspi, data, size, W25Q128_TIMEOUT_SPI_MS);
+    }
     W25Q128_CS_Deselect(flash);
 
     W25Q128_UnlockMutex(flash);
@@ -416,7 +415,8 @@ osStatus_t W25Q128_PageProgram(W25Q128_Handle_t *flash, uint32_t address, const 
         return osErrorParameter;
     }
 
-    if (address + size > flash->capacity || size > W25Q128_PAGE_SIZE) {
+    if (address + size > flash->capacity || size > W25Q128_PAGE_SIZE ||
+        (address & 0xFFU) + size > W25Q128_PAGE_SIZE) {
         return osErrorParameter;
     }
 
@@ -443,8 +443,10 @@ osStatus_t W25Q128_PageProgram(W25Q128_Handle_t *flash, uint32_t address, const 
     }
 
     W25Q128_CS_Select(flash);
-    HAL_SPI_Transmit(flash->hspi, tx_buffer, 4, HAL_MAX_DELAY);
-    HAL_StatusTypeDef hal_status = HAL_SPI_Transmit(flash->hspi, (uint8_t*)data, size, HAL_MAX_DELAY);
+    HAL_StatusTypeDef hal_status = HAL_SPI_Transmit(flash->hspi, tx_buffer, 4, W25Q128_TIMEOUT_SPI_MS);
+    if (hal_status == HAL_OK) {
+        hal_status = HAL_SPI_Transmit(flash->hspi, (uint8_t*)data, size, W25Q128_TIMEOUT_SPI_MS);
+    }
     W25Q128_CS_Deselect(flash);
 
     W25Q128_UnlockMutex(flash);

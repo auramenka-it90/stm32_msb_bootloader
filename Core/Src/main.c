@@ -28,7 +28,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include  "board_support_package.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,7 +49,8 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+/* Global flag indicating if the current boot is a Software Reset (Warm Boot) */
+volatile bool is_soft_reset_detected = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -72,7 +73,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+	/* Capture reset cause register before HAL_Init or RCC configuration clears it */
+	is_soft_reset_detected = get_rcc_csr();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/

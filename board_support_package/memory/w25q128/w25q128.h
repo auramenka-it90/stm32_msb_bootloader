@@ -14,6 +14,7 @@ extern "C" {
 #endif
 
 #include "board_support_package.h" /* Central config containing BSP_W25Q128_USE_MUTEX */
+#include "pin_mgmt.h"               /* Pin descriptor type for the CS pin */
 
 /* Memory sizes */
 #define W25Q128_FLASH_SIZE         0x1000000    /* 16 MB */
@@ -57,6 +58,7 @@ extern "C" {
 #define W25Q128_TIMEOUT_SECTOR_MS       1000  /* Max 4KB sector erase is 400ms (safety: 1000ms) */
 #define W25Q128_TIMEOUT_BLOCK_MS        3000  /* Max 64KB block erase is 2000ms (safety: 3000ms) */
 #define W25Q128_TIMEOUT_CHIP_ERASE_S    200   /* Max chip erase is 200 seconds */
+#define W25Q128_TIMEOUT_SPI_MS          1000  /* One SPI transfer must never stall this long */
 
 /* Mutex attributes */
 #define W25Q128_MUTEX_ATTR { \
@@ -72,9 +74,7 @@ extern "C" {
 /* Flash management handle structure */
 typedef struct {
     SPI_HandleTypeDef *hspi;
-    GPIO_TypeDef *cs_port;
-    uint16_t cs_pin;
-    uint8_t use_pin_mgmt;     /* Flag to enable hardware pin management */
+    const Pin_Descriptor_t *cs; /* Chip select descriptor provided at init */
 
     uint8_t initialized;
     uint32_t capacity;
@@ -90,6 +90,7 @@ typedef struct {
     uint8_t unique_id[W25Q128_UID_SIZE];
     uint8_t jedec_valid;
     uint8_t uid_valid;
+    const char *name;   /* Human-readable part name resolved from JEDEC ID */
 } W25Q128_Handle_t;
 
 /* Memory operation structure */
@@ -106,11 +107,7 @@ typedef struct {
 extern W25Q128_Handle_t bsp_flash; /* Global Flash Handle */
 
 /* Public functions */
-osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin);
-osStatus_t W25Q128_Init_Ex(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
-                          GPIO_TypeDef *cs_port, uint16_t cs_pin,
-                          uint8_t use_pin_mgmt);
-osStatus_t W25Q128_Init_With_PinMgmt(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi);
+osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi, const Pin_Descriptor_t *cs);
 osStatus_t W25Q128_DeInit(W25Q128_Handle_t *flash);
 
 /* Basic operations */
@@ -125,6 +122,7 @@ osStatus_t W25Q128_ChipErase(W25Q128_Handle_t *flash);
 osStatus_t W25Q128_ReadJEDECID(W25Q128_Handle_t *flash);
 osStatus_t W25Q128_GetJEDECID(W25Q128_Handle_t *flash, uint8_t *manufacturer, uint8_t *memory_type, uint8_t *capacity);
 uint8_t W25Q128_IsJEDECValid(W25Q128_Handle_t *flash);
+const char* W25Q128_GetName(W25Q128_Handle_t *flash);
 
 osStatus_t W25Q128_ReadUID(W25Q128_Handle_t *flash);
 osStatus_t W25Q128_GetUID(W25Q128_Handle_t *flash, uint8_t *uid);

@@ -85,6 +85,10 @@ __weak	uint32_t com_inbuf_fetch(Uart_ctrl_t *par, uint8_t *dst_buf, uint32_t siz
 
 //	send "size" bytes  with DMA
 __weak	bool com_send(Uart_ctrl_t *par, uint8_t *data, uint32_t size) {
+	/* Refuse while previous frame is still on the wire: tx_buf is read by DMA in place */
+	if (par->huart->gState != HAL_UART_STATE_READY) {
+		return false;
+	}
 	par->flag_tx_cplt=	false;
 	memcpy(par->tx_buf, data, size);
 	return (HAL_UART_Transmit_DMA(par->huart, par->tx_buf, size) == HAL_OK);

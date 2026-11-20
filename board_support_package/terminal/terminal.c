@@ -58,7 +58,7 @@ static	char* uint32_to_string(uint32_t n, char* buffer, size_t buffer_size);
 /* Memory Devices Descriptor Array - extended to support Internal CPU Flash */
 Dev_descriptor_t dev_descr_arr[_ID_DEV_NUM] =
 {
-    [0] = {
+    [_ID_FPGA_FLASH] = {
         /* Device 0: FPGA W25Q128 External SPI Flash */
         "DD4-W25Q128JV/M_ID=",
         W25Q128_PAGE_SIZE,
@@ -66,7 +66,7 @@ Dev_descriptor_t dev_descr_arr[_ID_DEV_NUM] =
         _TERMINAL_FPFA_MAX_NUM_BLOCK_ * W25Q128_BLOCK_SIZE,
         W25Q128_TIMEOUT_CHIP_ERASE_S,
         W25Q128_TIMEOUT_CHIP_ERASE_S,
-        dtrue,
+        dtrue, /* Auto-finish enabled */
         0,
         0
     },
@@ -111,7 +111,7 @@ bool terminal_init(void) {
 	SYS_Config.FuncPtr_SelfTest = &sys_SelfTest;
 	SYS_Config.FuncPtr_SysReset = &sys_Reset;
 
-	SYS_Config.system_info = device_info_create();
+	SYS_Config.system_info = (char*)get_device_info();
 
 	SYS_Init(&SYS_Config);
 	PROG_Init(&PROG_Config);
@@ -145,26 +145,13 @@ bool terminal_init(void) {
 	return true;
 }
 
-/**
- * @brief  Handling DSPAssist Task using precise periodic execution.
- *         Uses osDelayUntil to prevent cumulative timing drift caused by processing.
- *         Manages communication, telemetry, and conditional jump based on CRC.
- *         All comments in English.
- */
 void terminal_task(void) {
-    /* Initialize the absolute tick counter for precise periodic execution */
-    static uint32_t tick_periodic = 0;
-    if (tick_periodic == 0) {
-        tick_periodic = osKernelGetTickCount();
-    }
-    /* Increment absolute target tick count by the defined task period */
-    tick_periodic += _TERMINAL_TASK_TICK_;
 
     /* 1. Execute background telemetry and dispatcher handlers */
     terminal_telemetry_handler();
     dspa_dispatcher(_TERMINAL_TASK_TICK_ * 1000);
 
-#ifdef	_TERMINAL_PERMISSION_WRAPPER_
+#ifdef  _TERMINAL_PERMISSION_WRAPPER_
     com_check_timeout(&uctrl, _TERMINAL_TASK_TICK_ * 1000);
 #endif
 
@@ -180,9 +167,22 @@ void terminal_task(void) {
         tick_start = osKernelGetTickCount();
     }
 
-    if (((osKernelGetTickCount() - tick_start) > _TERMINAL_BOOTLOADER_TIMEOUT_) && !fl_stay_here) {
-#if (BSP_PERMISSION_JUMP_APPL_ == 1)
+    /* Calculate dynamic timeout based on reset cause and fast jump configuration */
+    uint32_t boot_timeout = _TERMINAL_BOOTLOADER_TIMEOUT_;
+
+#if (BSP_PERMISSION_FAST_JUMP == 1)
+    /* If this is a cold boot (Hard Reset), bypass the delay and jump immediately */
+    if (!is_soft_reset_detected) {
+        boot_timeout = 0;
+    }
+#endif
+
+    if (((osKernelGetTickCount() - tick_start) >= boot_timeout) && !fl_stay_here) {
+
+        /* Latch the timeout expiry so this block is never entered again */
         fl_stay_here = true;
+
+#if (BSP_PERMISSION_JUMP_APPL_ == 1)
         bool can_jump = false;
 
 #if (BSP_CHACK_APPL_CRC == 1)
@@ -209,10 +209,9 @@ void terminal_task(void) {
     /* 4. Update status LED blink state */
     led_blink(fl_stay_here);
 
-    /* 5. Precise periodic delay: blocks the thread until absolute target tick is reached */
-    osDelayUntil(tick_periodic);
+    /* 5. Standard delay to prevent timeout accumulator wind-up after long Erase operations */
+    osDelay(_TERMINAL_TASK_TICK_);
 }
-
 
 /**
  * @brief  Updates and saves current telemetry samples.
@@ -306,8 +305,6 @@ static dboolean prg_Read(const du8 dev_num, du8 *const pusData, const du32 ulSta
 
 	switch (dev_num) {
         case _ID_FPGA_FLASH: {
-            SPI_Bus_Acquire_For_STM32();
-            PIN_Reset(&pin_mr_prog);
             result = (W25Q128_ReadData(&bsp_flash, ulStartAddress, pusData, W25Q128_PAGE_SIZE) == osOK);
             break;
         }
@@ -329,25 +326,22 @@ static dboolean prg_Erase(const du8 dev_num) {
 	dboolean result = dfalse;
 
 	switch (dev_num) {
-        case _ID_FPGA_FLASH: {
-            PIN_Reset(&pin_mr_prog);
-            SPI_Bus_Acquire_For_STM32();
-            for (uint32_t i = 0; i < _TERMINAL_FPFA_MAX_NUM_BLOCK_; i++) {
-                if (W25Q128_BlockErase(&bsp_flash, i * W25Q128_BLOCK_SIZE) != osOK) {
-                    SPI_Bus_Release_To_FPGA();
-                    return dfalse;
-                }
-            }
-            SPI_Bus_Release_To_FPGA();
-            result = dtrue;
-            break;
-        }
-        case _ID_APPL_FLASH: {
-            /* Erase internal Flash sectors allocated for Application (Sectors 5 and 6) */
-            result = eeprom_memory_erase_app();
-            break;
-        }
-        default: break;
+	case _ID_FPGA_FLASH: {
+		for (uint32_t i = 0; i < _TERMINAL_FPFA_MAX_NUM_BLOCK_; i++) {
+			if (W25Q128_BlockErase(&bsp_flash, i * W25Q128_BLOCK_SIZE)!= osOK) {
+				return dfalse;
+			}
+		}
+		result = dtrue;
+		break;
+	}
+	case _ID_APPL_FLASH: {
+		/* Erase internal Flash sectors allocated for Application (Sectors 5 and 6) */
+		result = eeprom_memory_erase_app();
+		break;
+	}
+	default:
+		break;
 	}
 	return result;
 }
@@ -360,9 +354,6 @@ static dboolean prg_Write(const du8 dev_num, du8 *const pusData, const du32 ulSt
 
 	switch (dev_num) {
         case _ID_FPGA_FLASH: {
-            if (!SPI_Bus_Is_Acquired()) {
-                SPI_Bus_Acquire_For_STM32();
-            }
             result = (W25Q128_PageProgram(&bsp_flash, ulStartAddress, pusData, W25Q128_PAGE_SIZE) == osOK);
             break;
         }
@@ -377,43 +368,32 @@ static dboolean prg_Write(const du8 dev_num, du8 *const pusData, const du32 ulSt
 	return result;
 }
 
-/**
- * @brief  Performs physical reset of the programmed component if supported.
- */
 static void prg_Reset(const du8 dev_num) {
-	switch (dev_num) {
-        case _ID_FPGA_FLASH: {
-            SPI_Bus_Release_To_FPGA();
-            FPGA_Reset_OS(10);
+    switch (dev_num) {
+        case _ID_FPGA_FLASH:
+            /* No action. The FPGA stays in hardware reset. */
             break;
-        }
-        case _ID_APPL_FLASH: {
-            /* No specific hardware reset sequence needed for internal MCU Flash */
+        case _ID_APPL_FLASH:
             break;
-        }
-        default: break;
-	}
+        default:
+            break;
+    }
 }
 
-/**
- * @brief  Finalizes the programming transaction.
- */
 static dboolean prg_Finish(const du8 dev_num) {
-	dboolean result = dfalse;
-	switch (dev_num) {
-        case _ID_FPGA_FLASH: {
-            SPI_Bus_Release_To_FPGA();
-            FPGA_Reset_OS(10);
+    dboolean result = dfalse;
+    switch (dev_num) {
+        case _ID_FPGA_FLASH:
+            /* No action. The FPGA stays in hardware reset. */
             result = dtrue;
             break;
-        }
-        case _ID_APPL_FLASH: {
+        case _ID_APPL_FLASH:
             result = dtrue;
             break;
-        }
-        default: break;
-	}
-	return result;
+        default:
+            break;
+    }
+    return result;
 }
 
 /* ========================================================================= */

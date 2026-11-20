@@ -67,6 +67,12 @@ bool eeprom_memory_write_words(const uint32_t *p_data, uint32_t addr, uint32_t w
         return false;
     }
 
+    /* Writing is allowed only within the application region */
+    if (words_count > FLASH_CPU_SIZE / 4U ||
+        (addr - FLASH_CPU_START_ADDRESS) + words_count * 4U > FLASH_CPU_SIZE) {
+        return false;
+    }
+
     if (HAL_FLASH_Unlock() != HAL_OK) {
         return false;
     }
@@ -96,6 +102,15 @@ bool check_application(void) {
     fw_header_t *fw_info = NULL;
     uint32_t *search_ptr = (uint32_t *)APPLICATION_ADDRESS;
 
+    /* Invalidate flash caches: freshly programmed data must not be shadowed
+     * by cache lines fetched before the erase/program operation */
+    __HAL_FLASH_INSTRUCTION_CACHE_DISABLE();
+    __HAL_FLASH_DATA_CACHE_DISABLE();
+    __HAL_FLASH_INSTRUCTION_CACHE_RESET();
+    __HAL_FLASH_DATA_CACHE_RESET();
+    __HAL_FLASH_INSTRUCTION_CACHE_ENABLE();
+    __HAL_FLASH_DATA_CACHE_ENABLE();
+
     /* 1. Search for the magic word (scan the first 1024 bytes / 256 words) */
     for (int i = 0; i < 256; i++) {
         if (search_ptr[i] == 0x55AA55AAU) {
@@ -106,6 +121,11 @@ bool check_application(void) {
 
     /* 2. Basic safety checks for missing or corrupted firmware */
     if (fw_info == NULL || fw_info->fw_size == 0xFFFFFFFFU || fw_info->fw_size == 0) {
+        return false;
+    }
+
+    /* The declared image must fit within the allocated application region */
+    if (fw_info->fw_size > FLASH_CPU_SIZE) {
         return false;
     }
 
