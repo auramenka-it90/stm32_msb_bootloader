@@ -33,22 +33,19 @@
 
 ## Структура репозитория
 
-```
-B_QWEN/
-├── Core/                    CubeIDE-генерация + main/FreeRTOS/периферия
-├── board_support_package/
-│   ├── board_support_package.[ch]   реестр BSP: handles, конфиги, init
-│   ├── memory/application/          карта и драйвер внутренней Flash (сектора 5-6)
-│   ├── memory/w25q128/              драйвер внешней FLASH (битстрим FPGA)
-│   ├── terminal/                    eAssist-терминал: terminal.c, dspa, signals,
-│   │                                wrapper/std_com (UART+DMA транспорт)
-│   ├── terminal/version_control/    версия сборки
-│   ├── std_com/                     низкоуровневый обмен
-│   └── pin_management/              дескрипторы пинов + gpio_fallbacks.h
-├── Middlewares/             FreeRTOS
-├── Drivers/                 HAL/CMSIS
-└── msb_bootloader_qwen.ioc  CubeIDE-проект (STM32F411RE)
-```
+| Путь | Назначение |
+| :--- | :--- |
+| `Core/` | генерация CubeIDE: main, FreeRTOS, периферия |
+| `board_support_package/board_support_package.[ch]` | реестр BSP: обработчики, конфигурация, инициализация |
+| `board_support_package/memory/application/` | карта и драйвер внутренней Flash (сектора 5–6) |
+| `board_support_package/memory/w25q128/` | драйвер внешней FLASH (битстрим ПЛИС) |
+| `board_support_package/terminal/` | терминал eAssist: `terminal.c`, `dspa`, сигналы, `wrapper`/`std_com` (транспорт UART+DMA) |
+| `board_support_package/terminal/version_control/` | версия сборки |
+| `board_support_package/std_com/` | низкоуровневый обмен |
+| `board_support_package/pin_management/` | дескрипторы выводов + `gpio_fallbacks.h` |
+| `Middlewares/` | FreeRTOS |
+| `Drivers/` | HAL/CMSIS |
+| `msb_bootloader_qwen.ioc` | проект CubeIDE (STM32F411RE) |
 
 ## Сборка
 
