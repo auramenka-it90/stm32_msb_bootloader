@@ -11,7 +11,7 @@
 | MCU | STM32F411RE (512 К Flash, 128 К RAM), CubeIDE/GCC |
 | Приложение | секторы 5–6: `0x08020000`–`0x0805FFFF` (256 К) |
 | FPGA платы | Xilinx Spartan‑6, конфигурационная FLASH **W25Q128** на SPI1 |
-| Терминал | USART1 (DMA RX/TX) → разъём 221В34Ф26 (протокол eAssist/DSPA) |
+| Терминал | USART1 (DMA RX/TX), протокол eAssist/DSPA |
 | RTOS | FreeRTOS (CMSIS-RTOS v2) |
 
 ## Возможности
