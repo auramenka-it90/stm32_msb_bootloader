@@ -29,7 +29,9 @@ static uint8_t W25Q128_IsSupportedID(W25Q128_Handle_t *flash);
  * Read/program/erase/status commands are identical on all listed parts.
  * CAUTION: Read Unique ID (0x4B) is NOT uniform: GD/Puya/ISSI need 8 dummy bytes
  * (driver sends 4 -> UID is garbage), Macronix has no UID command (reads 0xFF).
- * The UID is informational only - never use it for authentication or decisions. */
+ * The UID is informational only - never use it for authentication or decisions.
+ * Spansion S25FLxxx has no 0x20 4KB sector erase: it uses 0xD7
+ * (handled in W25Q128_SectorErase by manufacturer id). */
 typedef struct {
     uint8_t     id[3];
     const char *name;
@@ -41,6 +43,7 @@ static const W25Q128_IdEntry_t jedec_whitelist[] = {
     { {0x85, 0x40, 0x18}, "PY25Q128"   }, /* Puya       */
     { {0x9D, 0x60, 0x18}, "IS25LP128"  }, /* ISSI       */
     { {0xC2, 0x20, 0x18}, "MX25L128xx" }, /* Macronix   */
+    { {0x01, 0x60, 0x18}, "S25FL128"   }, /* Spansion/AMD (Cypress) */
 };
 
 /* Mutex Locking Helpers - completely compiled out if BSP_W25Q128_USE_MUTEX = 0 */
@@ -646,8 +649,12 @@ osStatus_t W25Q128_SectorErase(W25Q128_Handle_t *flash, uint32_t address) {
         return status;
     }
 
+    uint8_t erase_cmd = (flash->manufacturer_id == W25Q128_MF_SPANSION)
+                        ? W25Q128_CMD_SECTOR_ERASE_SPANSION
+                        : W25Q128_CMD_SECTOR_ERASE;
+
     uint8_t tx_buffer[4] = {
-        W25Q128_CMD_SECTOR_ERASE,
+        erase_cmd,
         (uint8_t)((address >> 16) & 0xFF),
         (uint8_t)((address >> 8) & 0xFF),
         (uint8_t)(address & 0xFF)

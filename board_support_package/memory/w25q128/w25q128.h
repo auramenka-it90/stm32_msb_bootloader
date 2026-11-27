@@ -29,6 +29,7 @@ extern "C" {
 #define W25Q128_CMD_FAST_READ      0x0B
 #define W25Q128_CMD_PAGE_PROGRAM   0x02
 #define W25Q128_CMD_SECTOR_ERASE   0x20
+#define W25Q128_CMD_SECTOR_ERASE_SPANSION 0xD7  /* 4KB erase on Spansion S25FLxxx (0x20 not available) */
 #define W25Q128_CMD_BLOCK_ERASE    0xD8
 #define W25Q128_CMD_CHIP_ERASE     0xC7
 #define W25Q128_CMD_READ_STATUS1   0x05
@@ -48,6 +49,7 @@ extern "C" {
 
 /* JEDEC ID */
 #define W25Q128_MANUFACTURER_ID    0xEF
+#define W25Q128_MF_SPANSION        0x01   /* Spansion/AMD (Cypress) 4KB erase = 0xD7 */
 #define W25Q128_MEMORY_TYPE        0x40
 #define W25Q128_CAPACITY           0x18
 
