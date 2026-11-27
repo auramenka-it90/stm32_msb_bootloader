@@ -107,39 +107,95 @@ typedef struct {
 extern W25Q128_Handle_t bsp_flash; /* Global Flash Handle */
 
 /* Public functions */
+
+/**
+ * @brief  Initialize handle, create bus mutex, read JEDEC ID and verify the
+ *         part against the supported whitelist.
+ * @return osOK or error code (see .c implementation).
+ */
 osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi, const Pin_Descriptor_t *cs);
+
+/**
+ * @brief  Delete the bus mutex and zero the handle (call before jumping to app).
+ */
 osStatus_t W25Q128_DeInit(W25Q128_Handle_t *flash);
 
 /* Basic operations */
+
+/** @brief Read Data (0x03): sequential read of any aligned/unaligned block. */
 osStatus_t W25Q128_ReadData(W25Q128_Handle_t *flash, uint32_t address, uint8_t *data, uint32_t size);
+
+/** @brief Fast Read (0x0B): same as ReadData + 1 dummy byte, for higher SPI clock. */
 osStatus_t W25Q128_FastRead(W25Q128_Handle_t *flash, uint32_t address, uint8_t *data, uint32_t size);
+
+/** @brief Page Program (0x02): up to 256 B, never crossing a page boundary. */
 osStatus_t W25Q128_PageProgram(W25Q128_Handle_t *flash, uint32_t address, const uint8_t *data, uint32_t size);
+
+/** @brief Erase 4 KB sector containing the address (0x20). */
 osStatus_t W25Q128_SectorErase(W25Q128_Handle_t *flash, uint32_t address);
+
+/** @brief Erase 64 KB block containing the address (0xD8). */
 osStatus_t W25Q128_BlockErase(W25Q128_Handle_t *flash, uint32_t address);
+
+/** @brief Erase the whole array (0xC7), blocking until ready (up to ~200 s). */
 osStatus_t W25Q128_ChipErase(W25Q128_Handle_t *flash);
 
 /* ID functions */
+
+/** @brief Read JEDEC ID (0x9F) and cache it in the handle. */
 osStatus_t W25Q128_ReadJEDECID(W25Q128_Handle_t *flash);
+
+/** @brief Copy cached JEDEC ID bytes; NULL outputs allowed. */
 osStatus_t W25Q128_GetJEDECID(W25Q128_Handle_t *flash, uint8_t *manufacturer, uint8_t *memory_type, uint8_t *capacity);
+
+/** @brief 1 if the JEDEC cache is valid. */
 uint8_t W25Q128_IsJEDECValid(W25Q128_Handle_t *flash);
+
+/** @brief Part name from the whitelist ("unknown"/"none" if unresolved). */
 const char* W25Q128_GetName(W25Q128_Handle_t *flash);
 
+/** @brief Read Unique ID (0x4B); informational only, see .c whitelist note. */
 osStatus_t W25Q128_ReadUID(W25Q128_Handle_t *flash);
+
+/** @brief Copy cached 8-byte UID into caller buffer. */
 osStatus_t W25Q128_GetUID(W25Q128_Handle_t *flash, uint8_t *uid);
+
+/** @brief Read-only pointer to the cached UID inside the handle. */
 const uint8_t* W25Q128_GetUIDPtr(W25Q128_Handle_t *flash);
+
+/** @brief 1 if the UID cache is valid. */
 uint8_t W25Q128_IsUIDValid(W25Q128_Handle_t *flash);
 
 /* Utility functions */
+
+/** @brief Read status register 1/2/3 (0x05/0x35/0x15). */
 osStatus_t W25Q128_ReadStatusRegister(W25Q128_Handle_t *flash, uint8_t reg_num, uint8_t *status);
+
+/** @brief Intentionally not implemented (always osError): protection bits
+ *         are never programmed by this firmware. */
 osStatus_t W25Q128_WriteStatusRegister(W25Q128_Handle_t *flash, uint8_t reg_num, uint8_t status);
+
+/** @brief Poll BUSY bit (1 ms period) until clear or timeout. */
 osStatus_t W25Q128_WaitForReady(W25Q128_Handle_t *flash, uint32_t timeout);
+
+/** @brief Send Write Enable (0x06) before program/erase. */
 osStatus_t W25Q128_WriteEnable(W25Q128_Handle_t *flash);
+
+/** @brief Send Write Disable (0x04). */
 osStatus_t W25Q128_WriteDisable(W25Q128_Handle_t *flash);
 
 /* Advanced functions */
+
+/** @brief Read a whole sector by index (buffer >= W25Q128_SECTOR_SIZE). */
 osStatus_t W25Q128_ReadSector(W25Q128_Handle_t *flash, uint32_t sector, uint8_t *data);
+
+/** @brief Erase and program a whole sector by index (destroys old content). */
 osStatus_t W25Q128_WriteSector(W25Q128_Handle_t *flash, uint32_t sector, const uint8_t *data);
+
+/** @brief Erase one sector by index. */
 osStatus_t W25Q128_EraseSector(W25Q128_Handle_t *flash, uint32_t sector);
+
+/** @brief Erase one 64 KB block by index. */
 osStatus_t W25Q128_EraseBlock(W25Q128_Handle_t *flash, uint32_t block);
 
 #ifdef __cplusplus

@@ -45,6 +45,12 @@ static const W25Q128_IdEntry_t jedec_whitelist[] = {
 
 /* Mutex Locking Helpers - completely compiled out if BSP_W25Q128_USE_MUTEX = 0 */
 #if (BSP_W25Q128_USE_MUTEX == 1)
+/**
+ * @brief  Acquire the shared SPI bus mutex.
+ * @param  flash  Flash handle carrying the mutex id.
+ * @param  timeout Lock acquisition timeout, ms (osWaitForever allowed).
+ * @return osOK on success, osErrorParameter on bad handle, timeout error otherwise.
+ */
 static osStatus_t W25Q128_LockMutex(W25Q128_Handle_t *flash, uint32_t timeout) {
     if (flash == NULL || flash->spi_mutex == NULL) {
         return osErrorParameter;
@@ -52,6 +58,11 @@ static osStatus_t W25Q128_LockMutex(W25Q128_Handle_t *flash, uint32_t timeout) {
     return osMutexAcquire(flash->spi_mutex, timeout);
 }
 
+/**
+ * @brief  Release the shared SPI bus mutex.
+ * @param  flash Flash handle carrying the mutex id.
+ * @return osOK on success, osErrorParameter on bad handle.
+ */
 static osStatus_t W25Q128_UnlockMutex(W25Q128_Handle_t *flash) {
     if (flash == NULL || flash->spi_mutex == NULL) {
         return osErrorParameter;
@@ -64,16 +75,32 @@ static osStatus_t W25Q128_UnlockMutex(W25Q128_Handle_t *flash) {
 #define W25Q128_UnlockMutex(flash)            ((void)0) /* Cast to void prevents "statement with no effect" warning */
 #endif
 
-/* Chip Select Operations (Using fast Pin Macros) */
+/**
+ * @brief  Assert Chip Select (drive low) to start a SPI flash access.
+ * @param  flash Flash handle with bound CS pin descriptor.
+ * @note   Direct port register write, no bounds check: callers are internal.
+ */
 static void W25Q128_CS_Select(W25Q128_Handle_t *flash) {
     PIN_Reset_F(flash->cs);  /* Direct port register write */
 }
 
+/**
+ * @brief  Deassert Chip Select (drive high) to end a SPI flash access.
+ * @param  flash Flash handle with bound CS pin descriptor.
+ */
 static void W25Q128_CS_Deselect(W25Q128_Handle_t *flash) {
     PIN_Set_F(flash->cs);    /* Direct port register write */
 }
 
-/* Transmit/Receive Operations (With conditional Mutex Protection) */
+/**
+ * @brief  Mutex-protected full-duplex SPI transfer with CS framing.
+ *         Sequence: lock -> CS low -> HAL exchange -> CS high -> unlock.
+ * @param  flash   Flash handle (SPI + CS + mutex).
+ * @param  tx_data Transmit buffer.
+ * @param  rx_data Receive buffer.
+ * @param  size    Transfer length, bytes.
+ * @return osOK on success, mutex error or osError on SPI failure/timeout.
+ */
 static osStatus_t W25Q128_TransmitReceive(W25Q128_Handle_t *flash, uint8_t *tx_data, uint8_t *rx_data, uint16_t size) {
     osStatus_t status = W25Q128_LockMutex(flash, osWaitForever);
     if (status != osOK) {
@@ -89,6 +116,14 @@ static osStatus_t W25Q128_TransmitReceive(W25Q128_Handle_t *flash, uint8_t *tx_d
     return (hal_status == HAL_OK) ? osOK : osError;
 }
 
+/**
+ * @brief  Mutex-protected SPI write-only transfer with CS framing.
+ *         Sequence: lock -> CS low -> HAL transmit -> CS high -> unlock.
+ * @param  flash Flash handle (SPI + CS + mutex).
+ * @param  data  Transmit buffer.
+ * @param  size  Transfer length, bytes.
+ * @return osOK on success, mutex error or osError on SPI failure/timeout.
+ */
 static osStatus_t W25Q128_Transmit(W25Q128_Handle_t *flash, uint8_t *data, uint16_t size) {
     osStatus_t status = W25Q128_LockMutex(flash, osWaitForever);
     if (status != osOK) {
@@ -104,7 +139,12 @@ static osStatus_t W25Q128_Transmit(W25Q128_Handle_t *flash, uint8_t *data, uint1
     return (hal_status == HAL_OK) ? osOK : osError;
 }
 
-/* Read JEDEC ID */
+/**
+ * @brief  Read the 3-byte JEDEC identification (command 0x9F).
+ * @param  flash Flash handle; result cached in manufacturer_id/memory_type/
+ *               capacity_id, jedec_valid set on success / cleared on SPI error.
+ * @return osOK on success, osErrorParameter on NULL handle, other on SPI error.
+ */
 osStatus_t W25Q128_ReadJEDECID(W25Q128_Handle_t *flash) {
     if (flash == NULL) {
         return osErrorParameter;
@@ -127,6 +167,14 @@ osStatus_t W25Q128_ReadJEDECID(W25Q128_Handle_t *flash) {
     return osOK;
 }
 
+/**
+ * @brief  Return the previously cached JEDEC ID bytes (any output may be NULL).
+ * @param  flash       Flash handle with valid cache.
+ * @param  manufacturer Receives manufacturer id.
+ * @param  memory_type  Receives memory type id.
+ * @param  capacity     Receives capacity id.
+ * @return osOK, osErrorParameter on NULL handle, osErrorResource if cache invalid.
+ */
 osStatus_t W25Q128_GetJEDECID(W25Q128_Handle_t *flash, uint8_t *manufacturer, uint8_t *memory_type, uint8_t *capacity) {
     if (flash == NULL) {
         return osErrorParameter;
@@ -143,10 +191,21 @@ osStatus_t W25Q128_GetJEDECID(W25Q128_Handle_t *flash, uint8_t *manufacturer, ui
     return osOK;
 }
 
+/**
+ * @brief  Check whether the cached JEDEC ID is present and valid.
+ * @param  flash Flash handle.
+ * @return 1 if valid, 0 otherwise (also 0 for NULL handle).
+ */
 uint8_t W25Q128_IsJEDECValid(W25Q128_Handle_t *flash) {
     return (flash != NULL) ? flash->jedec_valid : 0;
 }
 
+/**
+ * @brief  Get the human-readable part name resolved from the JEDEC whitelist.
+ * @param  flash Flash handle.
+ * @return Part name ("W25Q128", "GD25Q128E", ...), "unknown" if ID was read
+ *         but not whitelisted, "none" if never resolved (or NULL handle).
+ */
 const char* W25Q128_GetName(W25Q128_Handle_t *flash) {
     if (flash == NULL || flash->name == NULL) {
         return "none";
@@ -154,6 +213,12 @@ const char* W25Q128_GetName(W25Q128_Handle_t *flash) {
     return flash->name;
 }
 
+/**
+ * @brief  Match the cached JEDEC ID against jedec_whitelist and store the
+ *         matching marketing name in the handle.
+ * @param  flash Flash handle with valid JEDEC cache.
+ * @return 1 if the part is supported, 0 otherwise (name set to "unknown").
+ */
 static uint8_t W25Q128_IsSupportedID(W25Q128_Handle_t *flash) {
     for (uint32_t i = 0; i < sizeof(jedec_whitelist) / sizeof(jedec_whitelist[0]); i++) {
         if (flash->manufacturer_id == jedec_whitelist[i].id[0] &&
@@ -167,7 +232,13 @@ static uint8_t W25Q128_IsSupportedID(W25Q128_Handle_t *flash) {
     return 0;
 }
 
-/* Read Unique ID */
+/**
+ * @brief  Read the 8-byte Unique ID (command 0x4B + 4 dummy bytes).
+ * @param  flash Flash handle; result cached in unique_id, uid_valid updated.
+ * @return osOK on success.
+ * @note   See the whitelist comment: UID validity differs per vendor, so the
+ *         value is informational only (terminal display), never for decisions.
+ */
 osStatus_t W25Q128_ReadUID(W25Q128_Handle_t *flash) {
     if (flash == NULL) {
         return osErrorParameter;
@@ -188,6 +259,12 @@ osStatus_t W25Q128_ReadUID(W25Q128_Handle_t *flash) {
     return osOK;
 }
 
+/**
+ * @brief  Copy the cached Unique ID into a caller buffer (8 bytes).
+ * @param  flash Flash handle with valid UID cache.
+ * @param  uid   Destination buffer, at least W25Q128_UID_SIZE bytes.
+ * @return osOK, osErrorParameter on NULL args, osErrorResource if cache invalid.
+ */
 osStatus_t W25Q128_GetUID(W25Q128_Handle_t *flash, uint8_t *uid) {
     if (flash == NULL || uid == NULL) {
         return osErrorParameter;
@@ -201,15 +278,35 @@ osStatus_t W25Q128_GetUID(W25Q128_Handle_t *flash, uint8_t *uid) {
     return osOK;
 }
 
+/**
+ * @brief  Get a read-only pointer to the cached Unique ID inside the handle.
+ * @param  flash Flash handle.
+ * @return Pointer to 8-byte UID storage, NULL for NULL handle. Validity is
+ *         checked separately with W25Q128_IsUIDValid().
+ */
 const uint8_t* W25Q128_GetUIDPtr(W25Q128_Handle_t *flash) {
     return (flash != NULL) ? flash->unique_id : NULL;
 }
 
+/**
+ * @brief  Check whether the cached Unique ID was read successfully.
+ * @param  flash Flash handle.
+ * @return 1 if valid, 0 otherwise (also 0 for NULL handle).
+ */
 uint8_t W25Q128_IsUIDValid(W25Q128_Handle_t *flash) {
     return (flash != NULL) ? flash->uid_valid : 0;
 }
 
-/* Flash Initialization */
+/**
+ * @brief  Initialize the flash handle: bind SPI/CS, create the bus mutex,
+ *         read the JEDEC ID and accept the part only if it is whitelisted.
+ * @param  flash Flash handle to initialize (fully zeroed first).
+ * @param  hspi  Initialized HAL SPI handle (CPOL/CPHA mode 0).
+ * @param  cs    Chip select pin descriptor (driven by pin_management).
+ * @return osOK on success; osErrorParameter on NULL args; osErrorResource if
+ *         mutex creation failed; osError if the JEDEC ID is not supported
+ *         (jedec_valid is then cleared); SPI error otherwise.
+ */
 osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
                        const Pin_Descriptor_t *cs) {
     if (flash == NULL || hspi == NULL || cs == NULL) {
@@ -251,6 +348,12 @@ osStatus_t W25Q128_Init(W25Q128_Handle_t *flash, SPI_HandleTypeDef *hspi,
     return osOK;
 }
 
+/**
+ * @brief  De-initialize the flash handle: delete the shared bus mutex and
+ *         zero all handle state (make before jumping to the application).
+ * @param  flash Flash handle (must be initialized).
+ * @return osOK, or osErrorParameter if handle is NULL / not initialized.
+ */
 osStatus_t W25Q128_DeInit(W25Q128_Handle_t *flash) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
@@ -268,7 +371,13 @@ osStatus_t W25Q128_DeInit(W25Q128_Handle_t *flash) {
     return osOK;
 }
 
-/* WaitForReady */
+/**
+ * @brief  Poll status register 1 until the BUSY bit clears, 1 ms per poll.
+ * @param  flash   Flash handle (must be initialized).
+ * @param  timeout Maximum wait, ms (pick from W25Q128_TIMEOUT_* per operation).
+ * @return osOK when ready, osErrorParameter on bad handle, SPI error or
+ *         osErrorTimeout if the device stays busy.
+ */
 osStatus_t W25Q128_WaitForReady(W25Q128_Handle_t *flash, uint32_t timeout) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
@@ -294,6 +403,11 @@ osStatus_t W25Q128_WaitForReady(W25Q128_Handle_t *flash, uint32_t timeout) {
     return osErrorTimeout;
 }
 
+/**
+ * @brief  Send Write Enable (0x06): sets the WEL bit required by program/erase.
+ * @param  flash Flash handle (must be initialized).
+ * @return osOK, osErrorParameter on bad handle, or SPI error.
+ */
 osStatus_t W25Q128_WriteEnable(W25Q128_Handle_t *flash) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
@@ -303,6 +417,11 @@ osStatus_t W25Q128_WriteEnable(W25Q128_Handle_t *flash) {
     return W25Q128_Transmit(flash, &cmd, 1);
 }
 
+/**
+ * @brief  Send Write Disable (0x04): clears the WEL bit.
+ * @param  flash Flash handle (must be initialized).
+ * @return osOK, osErrorParameter on bad handle, or SPI error.
+ */
 osStatus_t W25Q128_WriteDisable(W25Q128_Handle_t *flash) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
@@ -312,6 +431,13 @@ osStatus_t W25Q128_WriteDisable(W25Q128_Handle_t *flash) {
     return W25Q128_Transmit(flash, &cmd, 1);
 }
 
+/**
+ * @brief  Read one status register (0x05/0x35/0x15).
+ * @param  flash   Flash handle (must be initialized).
+ * @param  reg_num Register number: 1, 2 or 3.
+ * @param  status  Destination byte.
+ * @return osOK, osErrorParameter on bad handle/register, or SPI error.
+ */
 osStatus_t W25Q128_ReadStatusRegister(W25Q128_Handle_t *flash, uint8_t reg_num, uint8_t *status) {
     if (flash == NULL || !flash->initialized || status == NULL) {
         return osErrorParameter;
@@ -336,11 +462,25 @@ osStatus_t W25Q128_ReadStatusRegister(W25Q128_Handle_t *flash, uint8_t reg_num, 
     return result;
 }
 
+/**
+ * @brief  Status register write - intentionally NOT implemented.
+ * @return always osError.
+ * @note   Status bits 0 control block protection (BP/SRWD) and quad modes;
+ *         the firmware never programs protection, and a wrong write can
+ *         permanently lock the array, so the operation is kept unavailable.
+ */
 osStatus_t W25Q128_WriteStatusRegister(W25Q128_Handle_t *flash, uint8_t reg_num, uint8_t status) {
     return osError;
 }
 
-/* Read Data with Lock wrapping */
+/**
+ * @brief  Read an arbitrary data block (Read Data command 0x03).
+ * @param  flash   Flash handle (must be initialized).
+ * @param  address Start address, must satisfy address+size <= capacity.
+ * @param  data    Destination buffer.
+ * @param  size    Length, bytes (CS is held low for the whole transfer).
+ * @return osOK, osErrorParameter on bad args, mutex error or osError on SPI fault.
+ */
 osStatus_t W25Q128_ReadData(W25Q128_Handle_t *flash, uint32_t address, uint8_t *data, uint32_t size) {
     if (flash == NULL || !flash->initialized || data == NULL || size == 0) {
         return osErrorParameter;
@@ -374,7 +514,16 @@ osStatus_t W25Q128_ReadData(W25Q128_Handle_t *flash, uint32_t address, uint8_t *
     return (hal_status == HAL_OK) ? osOK : osError;
 }
 
-/* Fast Read with Lock wrapping */
+/**
+ * @brief  Read with Fast Read command (0x0B) + 1 dummy byte.
+ * @param  flash   Flash handle (must be initialized).
+ * @param  address Start address, must satisfy address+size <= capacity.
+ * @param  data    Destination buffer.
+ * @param  size    Length, bytes.
+ * @return osOK, osErrorParameter on bad args, mutex error or osError on SPI fault.
+ * @note   Preferred at SPI clock above the plain-read limit of the part;
+ *         otherwise identical to W25Q128_ReadData().
+ */
 osStatus_t W25Q128_FastRead(W25Q128_Handle_t *flash, uint32_t address, uint8_t *data, uint32_t size) {
     if (flash == NULL || !flash->initialized || data == NULL || size == 0) {
         return osErrorParameter;
@@ -409,7 +558,18 @@ osStatus_t W25Q128_FastRead(W25Q128_Handle_t *flash, uint32_t address, uint8_t *
     return (hal_status == HAL_OK) ? osOK : osError;
 }
 
-/* Page Program with Lock wrapping (Using correct Page Timeout) */
+/**
+ * @brief  Program one flash page (Page Program 0x02), max 256 bytes,
+ *         never crossing a page boundary.
+ * @param  flash   Flash handle (must be initialized).
+ * @param  address Start address within the page.
+ * @param  data    Source buffer.
+ * @param  size    Length, 1..256, with (address%256)+size <= 256.
+ * @return osOK on success (device confirmed not-busy), parameter/mutex/SPI error
+ *         or osErrorTimeout if the program operation did not finish in time.
+ * @note   Only clears bits (1->0); the region must be pre-erased. Larger writes
+ *         must be split by the caller (see W25Q128_WriteSector()).
+ */
 osStatus_t W25Q128_PageProgram(W25Q128_Handle_t *flash, uint32_t address, const uint8_t *data, uint32_t size) {
     if (flash == NULL || !flash->initialized || data == NULL || size == 0) {
         return osErrorParameter;
@@ -458,7 +618,13 @@ osStatus_t W25Q128_PageProgram(W25Q128_Handle_t *flash, uint32_t address, const 
     return W25Q128_WaitForReady(flash, W25Q128_TIMEOUT_PAGE_MS);
 }
 
-/* Sector Erase (Using correct Sector Timeout) */
+/**
+ * @brief  Erase the 4 KB sector containing the address (command 0x20).
+ * @param  flash   Flash handle (must be initialized).
+ * @param  address Any address inside the sector (aligned down automatically).
+ * @return osOK on success (sector reads 0xFF afterwards), parameter/mutex/SPI
+ *         error or osErrorTimeout if the erase did not finish in time.
+ */
 osStatus_t W25Q128_SectorErase(W25Q128_Handle_t *flash, uint32_t address) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
@@ -495,7 +661,12 @@ osStatus_t W25Q128_SectorErase(W25Q128_Handle_t *flash, uint32_t address) {
     return W25Q128_WaitForReady(flash, W25Q128_TIMEOUT_SECTOR_MS);
 }
 
-/* Block Erase (Using correct Block Timeout) */
+/**
+ * @brief  Erase the 64 KB block containing the address (command 0xD8).
+ * @param  flash   Flash handle (must be initialized).
+ * @param  address Any address inside the block (aligned down automatically).
+ * @return osOK on success, parameter/mutex/SPI error or osErrorTimeout.
+ */
 osStatus_t W25Q128_BlockErase(W25Q128_Handle_t *flash, uint32_t address) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
@@ -532,7 +703,12 @@ osStatus_t W25Q128_BlockErase(W25Q128_Handle_t *flash, uint32_t address) {
     return W25Q128_WaitForReady(flash, W25Q128_TIMEOUT_BLOCK_MS);
 }
 
-/* Chip Erase (Using correct Chip Timeout) */
+/**
+ * @brief  Erase the whole 16 MB array (command 0xC7). Destructive, long
+ *         operation (up to ~200 s, the calling task blocks, 1 ms polling).
+ * @param  flash Flash handle (must be initialized).
+ * @return osOK on success, parameter/mutex/SPI error or osErrorTimeout.
+ */
 osStatus_t W25Q128_ChipErase(W25Q128_Handle_t *flash) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
@@ -557,7 +733,14 @@ osStatus_t W25Q128_ChipErase(W25Q128_Handle_t *flash) {
     return W25Q128_WaitForReady(flash, W25Q128_TIMEOUT_CHIP_ERASE_S * 1000);
 }
 
-/* Advanced Operations */
+/**
+ * @brief  Read one whole 4 KB sector by its index.
+ * @param  flash  Flash handle (must be initialized).
+ * @param  sector Sector index (address = sector * 4 KB).
+ * @param  data   Destination buffer, at least W25Q128_SECTOR_SIZE bytes.
+ * @return osOK, osErrorParameter on bad args/out of range, or W25Q128_ReadData()
+ *         result.
+ */
 osStatus_t W25Q128_ReadSector(W25Q128_Handle_t *flash, uint32_t sector, uint8_t *data) {
     if (flash == NULL || !flash->initialized || data == NULL) {
         return osErrorParameter;
@@ -571,6 +754,17 @@ osStatus_t W25Q128_ReadSector(W25Q128_Handle_t *flash, uint32_t sector, uint8_t 
     return W25Q128_ReadData(flash, address, data, W25Q128_SECTOR_SIZE);
 }
 
+/**
+ * @brief  Erase-then-program one 4 KB sector by its index (read-modify-write
+ *         unit of this driver).
+ * @param  flash  Flash handle (must be initialized).
+ * @param  sector Sector index (address = sector * 4 KB).
+ * @param  data   Source buffer, full W25Q128_SECTOR_SIZE bytes.
+ * @return osOK on success; on error the sector is left erased/partially
+ *         programmed - the caller must retry or mark the block bad.
+ * @note   Previous sector content is destroyed by the erase even on later
+ *         failure; pass a complete image of the sector.
+ */
 osStatus_t W25Q128_WriteSector(W25Q128_Handle_t *flash, uint32_t sector, const uint8_t *data) {
     if (flash == NULL || !flash->initialized || data == NULL) {
         return osErrorParameter;
@@ -598,6 +792,13 @@ osStatus_t W25Q128_WriteSector(W25Q128_Handle_t *flash, uint32_t sector, const u
     return osOK;
 }
 
+/**
+ * @brief  Erase one 4 KB sector by its index.
+ * @param  flash  Flash handle (must be initialized).
+ * @param  sector Sector index (address = sector * 4 KB).
+ * @return osOK, osErrorParameter on bad args/out of range, or
+ *         W25Q128_SectorErase() result.
+ */
 osStatus_t W25Q128_EraseSector(W25Q128_Handle_t *flash, uint32_t sector) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
@@ -611,6 +812,13 @@ osStatus_t W25Q128_EraseSector(W25Q128_Handle_t *flash, uint32_t sector) {
     return W25Q128_SectorErase(flash, address);
 }
 
+/**
+ * @brief  Erase one 64 KB block by its index.
+ * @param  flash Flash handle (must be initialized).
+ * @param  block Block index (address = block * 64 KB).
+ * @return osOK, osErrorParameter on bad args/out of range, or
+ *         W25Q128_BlockErase() result.
+ */
 osStatus_t W25Q128_EraseBlock(W25Q128_Handle_t *flash, uint32_t block) {
     if (flash == NULL || !flash->initialized) {
         return osErrorParameter;
